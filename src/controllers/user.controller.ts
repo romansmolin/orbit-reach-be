@@ -73,6 +73,12 @@ export class UserController {
             expires: new Date(Date.now() + maxAge),
         }
 
+        if (isCrossSite) {
+            options.sameSite = 'none'
+            options.secure = true
+            options.partitioned = true
+        }
+
         const cookieDomain = process.env.COOKIE_DOMAIN
 
 		
@@ -443,4 +449,3 @@ export class UserController {
         }
     }
 }
-
