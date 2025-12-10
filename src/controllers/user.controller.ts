@@ -102,7 +102,11 @@ export class UserController {
     }
 
     private getGoogleRedirectUri(): string {
-        return `${getEnvVar('BACKEND_URL')}/auth/callback/google`
+        return `${getEnvVar('BACKEND_URL').replace(/\/$/, '')}/auth/callback/google`
+    }
+
+    private getFrontendBaseUrl(): string {
+        return (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '')
     }
 
     private extractMagicTokenFromState(state?: string | string[]): string | undefined {
@@ -286,21 +290,36 @@ export class UserController {
 
 	async googleAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
-            const code = req.query.code
+            const rawCode = req.query.code
+            const code = Array.isArray(rawCode) ? rawCode[0] : rawCode
 
-            if (!code) throw new BaseAppError('Authorization code is required', ErrorCode.BAD_REQUEST, 400)
+            if (!code || typeof code !== 'string') {
+                throw new BaseAppError('Authorization code is required', ErrorCode.BAD_REQUEST, 400)
+            }
 
             const googleClientId = getEnvVar('GOOGLE_CLIENT_ID')
             const googleClientSecret = getEnvVar('GOOGLE_CLIENT_SECRET')
+            const redirectUri = this.getGoogleRedirectUri()
 
-            const { data } = await axios.post('https://oauth2.googleapis.com/token', null, {
-                params: {
-                    code,
-                    client_id: googleClientId,
-                    client_secret: googleClientSecret,
-                    redirect_uri: this.getGoogleRedirectUri(),
-                    grant_type: 'authorization_code',
+            const tokenPayload = new URLSearchParams({
+                code,
+                client_id: googleClientId,
+                client_secret: googleClientSecret,
+                redirect_uri: redirectUri,
+                grant_type: 'authorization_code',
+            })
+
+            const { data } = await axios.post('https://oauth2.googleapis.com/token', tokenPayload.toString(), {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
                 },
+            })
+
+            this.logger.debug('Google token response received', {
+                operation: 'googleAuth',
+                hasIdToken: Boolean(data?.id_token),
+                hasAccessToken: Boolean(data?.access_token),
+                redirectUri,
             })
 
             if (!data || typeof data.id_token !== 'string') {
@@ -352,9 +371,31 @@ export class UserController {
 			this.logger.info("TOKEN: ", {sessionToken})
             res.cookie('token', sessionToken, this.buildCookieOptions(req))
 
-            return res.redirect(`${process.env.FRONTEND_URL}/all-posts?userId=${user.id}`)
+            const frontendBaseUrl = this.getFrontendBaseUrl()
+
+            return res.redirect(`${frontendBaseUrl}/all-posts?userId=${user.id}`)
         } catch (err) {
-            next(err)
+            const frontendBaseUrl = this.getFrontendBaseUrl()
+
+            this.logger.error('Google auth failed', {
+                operation: 'googleAuth',
+                error:
+                    err instanceof Error
+                        ? {
+                              name: err.name,
+                              message: err.message,
+                              stack: err.stack,
+                              ...(err instanceof BaseAppError ? { code: err.code } : {}),
+                          }
+                        : undefined,
+                redirectTarget: frontendBaseUrl,
+            })
+
+            return res.redirect(
+                `${frontendBaseUrl}/?googleAuth=failed${
+                    err instanceof BaseAppError ? `&reason=${encodeURIComponent(err.code)}` : ''
+                }`
+            )
         }
     }
 	// ### ENDTODO
