@@ -579,38 +579,43 @@ export class UserRepository implements IUserRepository {
                     ORDER BY up.start_date DESC
                     LIMIT 1
                 ),
-                current_usage AS (
+                upsert_usage AS (
+                    INSERT INTO user_plan_usage (
+                        id,
+                        tenant_id,
+                        plan_id,
+                        usage_type,
+                        period_start,
+                        period_end,
+                        used_count,
+                        limit_count
+                    )
                     SELECT 
-                        upu.used_count,
-                        upu.id as usage_id
-                    FROM user_plan_usage upu
-                    CROSS JOIN user_plan up
-                    WHERE upu.tenant_id = $1 
-                    AND upu.plan_id = up.plan_id
-                    AND upu.usage_type = $2
-                    AND upu.period_start = $3
-                    AND upu.period_end = $4
-                ),
-                update_usage AS (
-                    UPDATE user_plan_usage
-                    SET 
-                        used_count = GREATEST(0, LEAST(cu.used_count + $5, up.limit_count)),
-                        limit_count = up.limit_count,
+                        uuid_generate_v4(),
+                        $1,
+                        up.plan_id,
+                        $2,
+                        $3,
+                        $4,
+                        GREATEST(0, LEAST($5, up.limit_count)),
+                        up.limit_count
+                    FROM user_plan up
+                    WHERE up.limit_count IS NOT NULL AND up.limit_count > 0
+                    ON CONFLICT (tenant_id, plan_id, usage_type, period_start, period_end)
+                    DO UPDATE SET
+                        used_count = GREATEST(
+                            0, 
+                            LEAST(user_plan_usage.used_count + EXCLUDED.used_count, EXCLUDED.limit_count)
+                        ),
+                        limit_count = EXCLUDED.limit_count,
                         updated_at = NOW()
-                    FROM current_usage cu
-                    CROSS JOIN user_plan up
-                    WHERE user_plan_usage.tenant_id = $1
-                    AND user_plan_usage.plan_id = up.plan_id
-                    AND user_plan_usage.usage_type = $2
-                    AND user_plan_usage.period_start = $3
-                    AND user_plan_usage.period_end = $4
-                    RETURNING user_plan_usage.used_count, up.limit_count
+                    RETURNING user_plan_usage.used_count, user_plan_usage.limit_count
                 )
                 SELECT 
                     uu.used_count as new_usage_count,
                     uu.limit_count as limit_count,
                     true as success
-                FROM update_usage uu
+                FROM upsert_usage uu
             `
 
             const result = await client.query(query, [userId, usageType, periodStart, periodEnd, additionalCount])
