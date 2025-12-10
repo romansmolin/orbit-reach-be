@@ -668,6 +668,16 @@ export class UserRepository implements IUserRepository {
 
             for (const usageType of usageTypes) {
                 const limit = resolveLimit(usageType)
+                if (limit <= 0) {
+                    this.logger.warn('Skipping usage counter with non-positive limit', {
+                        operation: 'resetUsageCountersForPlan',
+                        userId,
+                        planId,
+                        usageType,
+                        limit,
+                    })
+                    continue
+                }
                 const existing = await client.query<{ id: string; period_start: Date; period_end: Date; used_count: number }>(
                     `
                     SELECT id, period_start, period_end, used_count
