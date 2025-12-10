@@ -1200,6 +1200,48 @@ export class PostService implements IPostsService {
                         errors: failures.map((f) => (f.error instanceof Error ? f.error.message : 'Unknown error')),
                     })
                 }
+
+                const successfulTargets = successes.map(({ target }) => target)
+                const successfulCount = successfulTargets.length
+
+                if (successfulCount > 0) {
+                    await this.incrementSentPostsLimit(userId, successfulCount)
+
+                    for (const target of successfulTargets) {
+                        try {
+                            await this.rateLimiter.incrementUsage(target.platform, userId, target.account)
+                            await this.rateLimiter.incrementAppUsage(target.platform, userId)
+
+                            this.logger.debug('Incremented rate limits for immediate post target', {
+                                operation: 'createPost',
+                                userId,
+                                postId,
+                                platform: target.platform,
+                                socialAccountId: target.account,
+                            })
+                        } catch (error) {
+                            this.logger.warn('Failed to increment rate limits for immediate post target', {
+                                operation: 'createPost',
+                                userId,
+                                postId,
+                                platform: target.platform,
+                                socialAccountId: target.account,
+                                error: {
+                                    name: error instanceof Error ? error.name : 'UnknownError',
+                                    code: error instanceof Error ? error.message : 'Unknown error',
+                                    stack: error instanceof Error ? error.stack : undefined,
+                                },
+                            })
+                        }
+                    }
+
+                    this.logger.info('Incremented sent posts usage for immediate posts', {
+                        operation: 'createPost',
+                        userId,
+                        postId,
+                        incrementCount: successfulCount,
+                    })
+                }
             }
 
             const startOfMonth = new Date()
