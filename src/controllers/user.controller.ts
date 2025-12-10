@@ -27,10 +27,26 @@ export class UserController {
     private buildCookieOptions(req: Request, maxAge = this.defaultCookieMaxAge): CookieOptions {
         const isProduction = process.env.NODE_ENV === 'production'
         const forwardedProto = req.headers['x-forwarded-proto']?.toString().split(',')[0]?.trim()
-        const host = req.hostname || ''
+        const host = (req.hostname || '').toLowerCase()
         const isSecureRequest = req.secure || forwardedProto === 'https'
         const isLocalDevHost = ['localhost', '127.0.0.1'].includes(host)
         const isNgrokHost = host.endsWith('.ngrok-free.app')
+        const frontendUrl = process.env.FRONTEND_URL?.split(',')[0]?.trim()
+        let frontendHost = ''
+
+        if (frontendUrl) {
+            try {
+                frontendHost = new URL(frontendUrl).hostname.toLowerCase()
+            } catch {
+                // ignore parsing errors, fallback to defaults
+            }
+        }
+
+        const isCrossSite =
+            Boolean(frontendHost) &&
+            frontendHost !== host &&
+            !host.endsWith(`.${frontendHost}`) &&
+            !frontendHost.endsWith(`.${host}`)
         const forceSecure =
             process.env.COOKIE_FORCE_SECURE === 'true' ||
             process.env.FORCE_SECURE_COOKIES === 'true'
@@ -38,9 +54,11 @@ export class UserController {
             forceSecure ||
             isSecureRequest ||
             isNgrokHost ||
+            isCrossSite ||
             (isProduction && !isLocalDevHost)
         const sameSiteOverride = process.env.COOKIE_SAMESITE?.toLowerCase() as CookieOptions['sameSite'] | undefined
-        let sameSite: CookieOptions['sameSite'] = sameSiteOverride ?? (secure ? 'none' : 'lax')
+        let sameSite: CookieOptions['sameSite'] =
+            sameSiteOverride ?? (isCrossSite ? 'none' : secure ? 'none' : 'lax')
 
         if (sameSite === 'none' && !secure) {
             sameSite = 'lax'
@@ -425,5 +443,4 @@ export class UserController {
         }
     }
 }
-
 
