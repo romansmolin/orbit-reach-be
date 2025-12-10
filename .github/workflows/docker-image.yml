@@ -22,7 +22,7 @@ jobs:
 
       - name: Build API image
         env:
-          IMAGE_NAME: ghcr.io/romansmolin/zapshipr-be-api
+          IMAGE_NAME: ghcr.io/romansmolin/orbitreach-be-api
         run: |
           TAG=latest
           docker build . -f Dockerfile \
@@ -31,7 +31,7 @@ jobs:
 
       - name: Build Worker image
         env:
-          IMAGE_NAME: ghcr.io/romansmolin/zapshipr-be-worker
+          IMAGE_NAME: ghcr.io/romansmolin/orbitreach-be-worker
         run: |
           TAG=latest
           docker build . -f Dockerfile \
@@ -40,14 +40,14 @@ jobs:
 
       - name: Push API image
         env:
-          IMAGE_NAME: ghcr.io/romansmolin/zapshipr-be-api
+          IMAGE_NAME: ghcr.io/romansmolin/orbitreach-be-api
         run: |
           TAG=latest
           docker push $IMAGE_NAME:$TAG
 
       - name: Push Worker image
         env:
-          IMAGE_NAME: ghcr.io/romansmolin/zapshipr-be-worker
+          IMAGE_NAME: ghcr.io/romansmolin/orbitreach-be-worker
         run: |
           TAG=latest
           docker push $IMAGE_NAME:$TAG
