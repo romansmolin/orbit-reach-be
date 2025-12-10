@@ -1,0 +1,53 @@
+name: Build & Push Backend Docker Images
+
+on:
+  push:
+    branches: ['main']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" \
+          | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build API image
+        env:
+          IMAGE_NAME: ghcr.io/romansmolin/zapshipr-be-api
+        run: |
+          TAG=latest
+          docker build . -f Dockerfile \
+            --target api \
+            -t $IMAGE_NAME:$TAG
+
+      - name: Build Worker image
+        env:
+          IMAGE_NAME: ghcr.io/romansmolin/zapshipr-be-worker
+        run: |
+          TAG=latest
+          docker build . -f Dockerfile \
+            --target worker \
+            -t $IMAGE_NAME:$TAG
+
+      - name: Push API image
+        env:
+          IMAGE_NAME: ghcr.io/romansmolin/zapshipr-be-api
+        run: |
+          TAG=latest
+          docker push $IMAGE_NAME:$TAG
+
+      - name: Push Worker image
+        env:
+          IMAGE_NAME: ghcr.io/romansmolin/zapshipr-be-worker
+        run: |
+          TAG=latest
+          docker push $IMAGE_NAME:$TAG
