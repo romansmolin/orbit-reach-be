@@ -24,48 +24,10 @@ export class UserController {
     }
 
 	// ### TODO: Create auth service
-    private resolveRequestHost(req: Request): string {
-        const forwardedHost = req.headers['x-forwarded-host']
-        const rawHost = Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost
-        const host = (rawHost || req.hostname || '').split(',')[0]?.trim().toLowerCase() || ''
-        return host.split(':')[0]
-    }
-
-    private resolveCookieDomain(host: string): string | undefined {
-        const normalizedHost = host.toLowerCase()
-
-        if (!normalizedHost || ['localhost', '127.0.0.1'].includes(normalizedHost)) {
-            return undefined
-        }
-
-        const configuredDomains = (process.env.COOKIE_DOMAIN || '')
-            .split(',')
-            .map((value) => value.trim())
-            .filter(Boolean)
-
-        for (const domain of configuredDomains) {
-            const normalizedDomain = domain.startsWith('.') ? domain.slice(1).toLowerCase() : domain.toLowerCase()
-            if (
-                normalizedHost === normalizedDomain ||
-                normalizedHost.endsWith(`.${normalizedDomain}`) ||
-                normalizedDomain.endsWith(`.${normalizedHost}`)
-            ) {
-                return domain.startsWith('.') ? domain : `.${normalizedDomain}`
-            }
-        }
-
-        const parts = normalizedHost.split('.')
-        if (parts.length >= 2) {
-            return `.${parts.slice(-2).join('.')}`
-        }
-
-        return undefined
-    }
-
     private buildCookieOptions(req: Request, maxAge = this.defaultCookieMaxAge): CookieOptions {
         const isProduction = process.env.NODE_ENV === 'production'
         const forwardedProto = req.headers['x-forwarded-proto']?.toString().split(',')[0]?.trim()
-        const host = this.resolveRequestHost(req)
+        const host = (req.hostname || '').toLowerCase()
         const isSecureRequest = req.secure || forwardedProto === 'https'
         const isLocalDevHost = ['localhost', '127.0.0.1'].includes(host)
         const isNgrokHost = host.endsWith('.ngrok-free.app')
@@ -117,10 +79,14 @@ export class UserController {
             options.partitioned = true
         }
 
-        const cookieDomain = this.resolveCookieDomain(host)
+        const cookieDomain = process.env.COOKIE_DOMAIN
 
+		
         if (secure && cookieDomain) {
-            options.domain = cookieDomain
+            const normalizedDomain = cookieDomain.startsWith('.') ? cookieDomain.slice(1) : cookieDomain
+            if (host === normalizedDomain || host.endsWith(`.${normalizedDomain}`)) {
+                options.domain = cookieDomain
+            }
         }
 
         return options
