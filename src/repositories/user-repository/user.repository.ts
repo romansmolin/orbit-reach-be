@@ -575,7 +575,8 @@ export class UserRepository implements IUserRepository {
                     FROM user_plans up
                     WHERE up.tenant_id = $1 
                     AND up.is_active = true
-                    AND (up.end_date IS NULL OR up.end_date > NOW())
+                    AND (up.end_date IS NULL OR up.end_date >= $3)
+                    AND up.start_date <= $4
                     ORDER BY up.start_date DESC
                     LIMIT 1
                 ),
