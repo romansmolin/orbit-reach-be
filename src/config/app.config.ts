@@ -13,6 +13,7 @@ export function createApp(logger: ILogger) {
     app.set('trust proxy', 1)
 
     app.use('/webhooks/stripe', express.raw({ type: 'application/json' }))
+    app.use('/payments/secure-processor/webhook', express.raw({ type: '*/*' }))
 
     app.use(express.json())
     app.use(bodyParser.urlencoded({ extended: true }))

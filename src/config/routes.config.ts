@@ -5,11 +5,13 @@ import createUserRoutes from '@/routes/user.routes'
 import createAiRoutes from '@/routes/ai.routes'
 import createEmailRoutes from '@/routes/email.routes'
 import createStripeWebhook from '@/webhooks/stripe/stripe.webhook'
+import createPaymentsRoutes from '@/routes/payments.routes'
 import { ILogger } from '@/shared/infra/logger/logger.interface'
 import { Services } from './services.config'
 
 export function configureRoutes(app: express.Application, services: Services): void {
     app.use(createStripeWebhook(services.logger, services.stripeWebhookService))
+    app.use(createPaymentsRoutes(services.logger, services))
     app.use(createUserRoutes(services.logger, services))
     app.use(createAccountsRoutes(services.logger, services))
     app.use(createPostRoutes(services.logger, services.postsService))

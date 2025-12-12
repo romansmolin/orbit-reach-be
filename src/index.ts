@@ -11,7 +11,9 @@ async function startServer() {
             points: Number(process.env.API_RATE_LIMIT_POINTS || 300),
             duration: Number(process.env.API_RATE_LIMIT_DURATION || 60),
             blockDuration: Number(process.env.API_RATE_LIMIT_BLOCK_DURATION || 60),
-            skip: (req) => req.path.startsWith('/webhooks/stripe'),
+            skip: (req) =>
+                req.path.startsWith('/webhooks/stripe') ||
+                req.path.startsWith('/payments/secure-processor/webhook'),
             customResponseMessage: 'Too many requests from this IP. Please slow down.',
         })
     )

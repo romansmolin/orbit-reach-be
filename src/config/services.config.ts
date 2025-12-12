@@ -32,6 +32,8 @@ import { ErrorCode } from '@/shared/consts/error-codes.const'
 import { ConsoleLogger } from '@/shared/infra/logger'
 import { SocialMediaPublisherFactory } from '@/services/social-media/factories/socia-media-publisher.factory'
 import { ImageProcessor } from '@/shared/infra/media/image-processor'
+import { PaymentTokensRepository } from '@/repositories/payment-tokens-repository'
+import { SecureProcessorPaymentService } from '@/services/secure-processor-service'
 
 export interface Services {
     postRepository: PostsRepository
@@ -58,6 +60,8 @@ export interface Services {
     oauthStateService: OAuthStateService
     stripeWebhookService: StripeWebhookService
     stripeService: StripeService
+    paymentTokensRepository: PaymentTokensRepository
+    secureProcessorPaymentService: SecureProcessorPaymentService
 	logger: ILogger
 }
 
@@ -74,6 +78,7 @@ export function initializeServices() {
     const postRepository = new PostsRepository(logger)
     const accountRepository = new AccountRepository(logger)
     const userRepository = new UserRepository(logger)
+    const paymentTokensRepository = new PaymentTokensRepository()
     const emailService: IEmailService = new NodemailerEmailService(logger)
 	const videoProcessor = new VideoProcessor(logger)
     const oauthErrorHandler = new OAuthErrorHandler(logger)
@@ -83,6 +88,11 @@ export function initializeServices() {
     const userService = new UserService(userRepository, stripeService, logger, emailService)
     const tenantSettingsService = new TenantSettingsService(tenantSettingsRepository)
     const platformQuotaService = new PlatformQuotaService(platformUsageRepository)
+    const secureProcessorPaymentService = new SecureProcessorPaymentService(
+        paymentTokensRepository,
+        userService,
+        logger
+    )
 
     const socialMediaErrorHandler = new SocialMediaErrorHandler(logger, postRepository)
     const socialMediaPublisherFactory = new SocialMediaPublisherFactory(
@@ -173,6 +183,8 @@ export function initializeServices() {
         oauthStateService,
         stripeWebhookService,
         stripeService,
+        paymentTokensRepository,
+        secureProcessorPaymentService,
 		logger
     }
 }

@@ -744,6 +744,81 @@ export class UserRepository implements IUserRepository {
         }
     }
 
+    async incrementUsageLimits(params: {
+        userId: string
+        planId: string
+        periodStart: Date
+        periodEnd: Date
+        deltas: { sent?: number; scheduled?: number; ai?: number }
+        baseLimits: { sent: number; scheduled: number; ai: number }
+    }): Promise<void> {
+        const client = await this.client.connect()
+
+        try {
+            await client.query('BEGIN')
+
+            const applyDelta = async (usageType: 'sent' | 'scheduled' | 'ai', delta: number, baseLimit: number) => {
+                if (delta <= 0) return
+
+                const existing = await client.query<{
+                    id: string
+                    used_count: number
+                    limit_count: number
+                }>(
+                    `
+                    SELECT id, used_count, limit_count
+                    FROM user_plan_usage
+                    WHERE tenant_id = $1 AND plan_id = $2 AND usage_type = $3 AND period_start = $4 AND period_end = $5
+                    LIMIT 1
+                    `,
+                    [params.userId, params.planId, usageType, params.periodStart, params.periodEnd]
+                )
+
+                if (existing.rows.length > 0) {
+                    const row = existing.rows[0]
+                    await client.query(
+                        `
+                        UPDATE user_plan_usage
+                        SET
+                            limit_count = GREATEST($1, $2, limit_count + $3),
+                            updated_at = NOW()
+                        WHERE id = $4
+                        `,
+                        [row.used_count, baseLimit + delta, delta, row.id]
+                    )
+                } else {
+                    await client.query(
+                        `
+                        INSERT INTO user_plan_usage (
+                            id,
+                            tenant_id,
+                            plan_id,
+                            usage_type,
+                            period_start,
+                            period_end,
+                            used_count,
+                            limit_count
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
+                        `,
+                        [uuidv4(), params.userId, params.planId, usageType, params.periodStart, params.periodEnd, baseLimit + delta]
+                    )
+                }
+            }
+
+            await applyDelta('sent', params.deltas.sent ?? 0, params.baseLimits.sent)
+            await applyDelta('scheduled', params.deltas.scheduled ?? 0, params.baseLimits.scheduled)
+            await applyDelta('ai', params.deltas.ai ?? 0, params.baseLimits.ai)
+
+            await client.query('COMMIT')
+        } catch (error) {
+            await client.query('ROLLBACK')
+            throw new BaseAppError('Failed to increment usage limits', ErrorCode.UNKNOWN_ERROR, 500)
+        } finally {
+            client.release()
+        }
+    }
+
     async getCurrentUsageQuota(
         userId: string,
         periodStart: Date,

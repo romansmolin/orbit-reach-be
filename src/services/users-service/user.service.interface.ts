@@ -87,5 +87,16 @@ export interface IUserService {
         periodStart: Date
         periodEnd: Date
     }): Promise<void>
+    applyAddonPurchase(
+        userId: string,
+        addon: {
+            addonCode: string
+            usageDeltas: {
+                sentPosts?: number
+                scheduledPosts?: number
+                aiRequests?: number
+            }
+        }
+    ): Promise<void>
     processExpiredPlans(): Promise<void>
 }

@@ -22,8 +22,8 @@ const PLAN_LIMITS: Record<
     { sentPostsLimit: number; scheduledPostsLimit: number; accountsLimit: number; aiRequestsLimit: number }
 > = {
     [UserPlans.FREE]: { sentPostsLimit: 30, scheduledPostsLimit: 10, accountsLimit: 1, aiRequestsLimit: 0 },
-    [UserPlans.STARTER]: { sentPostsLimit: 1000, scheduledPostsLimit: 500, accountsLimit: 10, aiRequestsLimit: 0 },
-    [UserPlans.PRO]: { sentPostsLimit: 2000, scheduledPostsLimit: 1000, accountsLimit: 30, aiRequestsLimit: 500 },
+    [UserPlans.STARTER]: { sentPostsLimit: 300, scheduledPostsLimit: 200, accountsLimit: 10, aiRequestsLimit: 0 },
+    [UserPlans.PRO]: { sentPostsLimit: 500, scheduledPostsLimit: 400, accountsLimit: 30, aiRequestsLimit: 50 },
 }
 
 const PLAN_PRICE_ENV_KEYS: Partial<Record<UserPlans, { monthly: string; yearly: string }>> = {
@@ -781,6 +781,58 @@ export class UserService implements IUserService {
 
     async incrementAiUsage(userId: string): Promise<void> {
         await this.adjustUsage(userId, 'ai', 1)
+    }
+
+    async applyAddonPurchase(
+        userId: string,
+        addon: {
+            addonCode: string
+            usageDeltas: {
+                sentPosts?: number
+                scheduledPosts?: number
+                aiRequests?: number
+            }
+        }
+    ): Promise<void> {
+        const sentDelta = Math.max(0, addon.usageDeltas.sentPosts ?? 0)
+        const scheduledDelta = Math.max(0, addon.usageDeltas.scheduledPosts ?? 0)
+        const aiDelta = Math.max(0, addon.usageDeltas.aiRequests ?? 0)
+
+        if (sentDelta === 0 && scheduledDelta === 0 && aiDelta === 0) {
+            throw new BaseAppError('No add-on increments provided', ErrorCode.BAD_REQUEST, 400)
+        }
+
+        try {
+            const plan = await this.repository.findUserPlanByUserId(userId)
+            const { startDate, endDate } = this.resolvePlanPeriod(plan)
+
+            await this.repository.incrementUsageLimits({
+                userId,
+                planId: plan.id,
+                periodStart: startDate,
+                periodEnd: endDate,
+                deltas: {
+                    sent: sentDelta,
+                    scheduled: scheduledDelta,
+                    ai: aiDelta,
+                },
+                baseLimits: {
+                    sent: plan.sendPostsLimit,
+                    scheduled: plan.scheduledPostsLimit,
+                    ai: plan.aiRequestsLimit ?? 0,
+                },
+            })
+
+            this.logger.info('Applied add-on purchase', {
+                operation: 'applyAddonPurchase',
+                userId,
+                addonCode: addon.addonCode,
+                deltas: { sentDelta, scheduledDelta, aiDelta },
+            })
+        } catch (error) {
+            if (error instanceof BaseAppError) throw error
+            throw new BaseAppError('Failed to apply add-on purchase', ErrorCode.UNKNOWN_ERROR, 500)
+        }
     }
 
     private async adjustUsage(userId: string, usageType: 'accounts' | 'ai', delta: number): Promise<void> {
