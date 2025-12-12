@@ -3,7 +3,7 @@ import { PaymentTokenStatus } from '@/entities/payment-token'
 export type SecureProcessorPlanCode = 'STARTER' | 'PRO'
 export type SecureProcessorBillingPeriod = 'monthly' | 'yearly'
 export type SecureProcessorItemType = 'plan' | 'addon'
-export type SecureProcessorAddonCode = 'EXTRA_POSTS_100' | 'EXTRA_SCHEDULES_100' | 'EXTRA_AI_50'
+export type SecureProcessorAddonCode = 'EXTRA_SMALL' | 'EXTRA_MEDIUM' | 'EXTRA_LARGE'
 
 export interface CheckoutTokenResponse {
     token: string

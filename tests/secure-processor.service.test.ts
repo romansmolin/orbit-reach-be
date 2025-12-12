@@ -292,23 +292,58 @@ async function testAddonCheckout() {
     const result: CheckoutTokenResponse = await service.createCheckoutToken({
         itemType: 'addon',
         userId: 'tenant_1',
-        addonCode: 'EXTRA_POSTS_100' as SecureProcessorAddonCode,
+        addonCode: 'EXTRA_SMALL' as SecureProcessorAddonCode,
     })
 
     assert.strictEqual(result.token, 'tok_addon')
     const body = apiClient.lastPost?.body as any
-    assert.strictEqual(body.order.amount, 900)
+    assert.strictEqual(body.order.amount, 100)
     assert.strictEqual(body.order.currency, 'EUR')
     assert.strictEqual(repo.lastCreateInput.itemType, 'addon')
-    assert.strictEqual(repo.lastCreateInput.addonCode, 'EXTRA_POSTS_100')
-    assert.deepStrictEqual(repo.lastCreateInput.usageDeltas, { sentPosts: 100 })
+    assert.strictEqual(repo.lastCreateInput.addonCode, 'EXTRA_SMALL')
+    assert.deepStrictEqual(repo.lastCreateInput.usageDeltas, { sentPosts: 20, scheduledPosts: 10, aiRequests: 10 })
     assert.strictEqual(repo.lastCreateInput.planCode, UserPlans.PRO)
     assert.strictEqual(repo.lastCreateInput.billingPeriod, 'yearly')
+}
+
+async function testAddonCheckoutForFreePlan() {
+    setEnv()
+    const apiClient = new MockApiClient()
+    apiClient.postResponse = { checkout: { token: 'tok_free_addon', uid: 'uid_free_addon' } }
+    const repo = new MockPaymentTokensRepository()
+    const userService = new MockUserService()
+    userService.plan.planName = UserPlans.FREE
+    userService.plan.planType = 'monthly'
+    userService.plan.aiRequestsLimit = 0
+    const logger = new MockLogger()
+
+    const service = new SecureProcessorPaymentService(repo, userService as any, logger, apiClient)
+
+    const result: CheckoutTokenResponse = await service.createCheckoutToken({
+        itemType: 'addon',
+        userId: 'tenant_1',
+        addonCode: 'EXTRA_MEDIUM' as SecureProcessorAddonCode,
+    })
+
+    assert.strictEqual(result.token, 'tok_free_addon')
+    const body = apiClient.lastPost?.body as any
+    assert.strictEqual(body.order.amount, 500)
+    assert.strictEqual(body.order.currency, 'EUR')
+    assert.strictEqual(repo.lastCreateInput.itemType, 'addon')
+    assert.strictEqual(repo.lastCreateInput.addonCode, 'EXTRA_MEDIUM')
+    assert.deepStrictEqual(repo.lastCreateInput.usageDeltas, {
+        sentPosts: 100,
+        scheduledPosts: 80,
+        aiRequests: 30,
+    })
+    assert.strictEqual(repo.lastCreateInput.planCode, UserPlans.FREE)
+    assert.strictEqual(repo.lastCreateInput.billingPeriod, 'monthly')
 }
 
 async function run() {
     await testPlanCheckout()
     await testAddonCheckout()
+    await testAddonCheckoutForFreePlan()
     console.log('Secure Processor service tests passed')
 }
 

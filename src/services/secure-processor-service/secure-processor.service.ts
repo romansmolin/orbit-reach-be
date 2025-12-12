@@ -47,23 +47,23 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         SecureProcessorAddonCode,
         { amount: number; currency: string; description: string; usageDeltas: UsageDeltas }
     > = {
-        EXTRA_POSTS_100: {
-            amount: 900,
+        EXTRA_SMALL: {
+            amount: 100,
             currency: 'EUR',
-            description: 'Extra 100 posts allowance',
-            usageDeltas: { sentPosts: 100 },
+            description: 'Extra Small Usage Package',
+            usageDeltas: { sentPosts: 20, scheduledPosts: 10, aiRequests: 10 },
         },
-        EXTRA_SCHEDULES_100: {
-            amount: 800,
+        EXTRA_MEDIUM: {
+            amount: 500,
             currency: 'EUR',
-            description: 'Extra 100 scheduled posts allowance',
-            usageDeltas: { scheduledPosts: 100 },
+            description: 'Extra Medium Usage Package',
+            usageDeltas: { sentPosts: 100, scheduledPosts: 80, aiRequests: 30 },
         },
-        EXTRA_AI_50: {
-            amount: 1200,
+        EXTRA_LARGE: {
+            amount: 1000,
             currency: 'EUR',
-            description: 'Extra 50 AI requests allowance',
-            usageDeltas: { aiRequests: 50 },
+            description: 'Extra Large Usage Package',
+            usageDeltas: { sentPosts: 500, scheduledPosts: 450, aiRequests: 100 },
         },
     }
 

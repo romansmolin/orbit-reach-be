@@ -19,7 +19,7 @@ const planTokenSchema = z.object({
 
 const addonTokenSchema = z.object({
     itemType: z.literal('addon'),
-    addonCode: z.enum(['EXTRA_POSTS_100', 'EXTRA_SCHEDULES_100', 'EXTRA_AI_50']),
+    addonCode: z.enum(['EXTRA_SMALL', 'EXTRA_MEDIUM', 'EXTRA_LARGE']),
 })
 
 const createTokenSchema = z.union([planTokenSchema, addonTokenSchema])
