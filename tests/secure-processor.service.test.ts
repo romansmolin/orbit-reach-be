@@ -11,6 +11,11 @@ import { PaymentToken, PaymentTokenStatus, UsageDeltas } from '@/entities/paymen
 import { UserPlans } from '@/shared/consts/plans'
 import { IApiClient } from '@/shared/infra/api'
 import { ILogger } from '@/shared/infra/logger/logger.interface'
+import {
+    calculateFlexibleTopUpUsage,
+    FLEXIBLE_TOP_UP_MIN_CENTS,
+} from '@/services/secure-processor-service/flexible-topup-calculator'
+import { BaseAppError } from '@/shared/errors/base-error'
 
 class MockApiClient implements IApiClient {
     public lastPost?: { url: string; body: any; options?: any }
@@ -292,8 +297,8 @@ async function testAddonCheckout() {
     const result: CheckoutTokenResponse = await service.createCheckoutToken({
         itemType: 'addon',
         userId: 'tenant_1',
-        addonCode: 'EXTRA_SMALL' as SecureProcessorAddonCode,
-    })
+        addonCode: 'EXTRA_SMALL',
+    } as any)
 
     assert.strictEqual(result.token, 'tok_addon')
     const body = apiClient.lastPost?.body as any
@@ -322,8 +327,8 @@ async function testAddonCheckoutForFreePlan() {
     const result: CheckoutTokenResponse = await service.createCheckoutToken({
         itemType: 'addon',
         userId: 'tenant_1',
-        addonCode: 'EXTRA_MEDIUM' as SecureProcessorAddonCode,
-    })
+        addonCode: 'EXTRA_MEDIUM',
+    } as any)
 
     assert.strictEqual(result.token, 'tok_free_addon')
     const body = apiClient.lastPost?.body as any
@@ -340,10 +345,89 @@ async function testAddonCheckoutForFreePlan() {
     assert.strictEqual(repo.lastCreateInput.billingPeriod, 'monthly')
 }
 
+async function testFlexibleTopUpCheckout() {
+    setEnv()
+    const apiClient = new MockApiClient()
+    apiClient.postResponse = { checkout: { token: 'tok_flex', uid: 'uid_flex' } }
+    const repo = new MockPaymentTokensRepository()
+    const userService = new MockUserService()
+    const logger = new MockLogger()
+
+    const service = new SecureProcessorPaymentService(repo, userService as any, logger, apiClient)
+
+    const result: CheckoutTokenResponse = await service.createCheckoutToken({
+        itemType: 'addon',
+        userId: 'tenant_1',
+        addonCode: 'FLEX_TOP_UP',
+        amount: 17,
+        currency: 'EUR',
+    } as any)
+
+    assert.strictEqual(result.token, 'tok_flex')
+    const body = apiClient.lastPost?.body as any
+    assert.strictEqual(body.order.amount, 1700)
+    assert.strictEqual(body.order.currency, 'EUR')
+    assert.strictEqual(repo.lastCreateInput.itemType, 'addon')
+    assert.strictEqual(repo.lastCreateInput.addonCode, 'FLEX_TOP_UP')
+    assert.deepStrictEqual(repo.lastCreateInput.usageDeltas, { sentPosts: 410, scheduledPosts: 226, aiRequests: 106 })
+}
+
+async function testFlexibleTopUpDecimalsAndUsage() {
+    setEnv()
+    const apiClient = new MockApiClient()
+    apiClient.postResponse = { checkout: { token: 'tok_flex_decimal', uid: 'uid_flex_decimal' } }
+    const repo = new MockPaymentTokensRepository()
+    const userService = new MockUserService()
+    const logger = new MockLogger()
+
+    const service = new SecureProcessorPaymentService(repo, userService as any, logger, apiClient)
+    const amount = 50.2
+
+    await service.createCheckoutToken({
+        itemType: 'addon',
+        userId: 'tenant_1',
+        addonCode: 'FLEX_TOP_UP',
+        amount,
+        currency: 'EUR',
+    } as any)
+
+    const expectedUsage = calculateFlexibleTopUpUsage(5020)
+    assert.strictEqual(repo.lastCreateInput.amount, 5020)
+    assert.deepStrictEqual(repo.lastCreateInput.usageDeltas, expectedUsage)
+}
+
+async function testFlexibleTopUpBelowMinimumFails() {
+    setEnv()
+    const apiClient = new MockApiClient()
+    const repo = new MockPaymentTokensRepository()
+    const userService = new MockUserService()
+    const logger = new MockLogger()
+
+    const service = new SecureProcessorPaymentService(repo, userService as any, logger, apiClient)
+
+    await assert.rejects(
+        () =>
+            service.createCheckoutToken({
+                itemType: 'addon',
+                userId: 'tenant_1',
+                addonCode: 'FLEX_TOP_UP',
+                amount: (FLEXIBLE_TOP_UP_MIN_CENTS - 1) / 100,
+                currency: 'EUR',
+            } as any),
+        (error: any) => {
+            assert.ok(error instanceof BaseAppError)
+            return String(error.message).includes('Minimum top-up')
+        }
+    )
+}
+
 async function run() {
     await testPlanCheckout()
     await testAddonCheckout()
     await testAddonCheckoutForFreePlan()
+    await testFlexibleTopUpCheckout()
+    await testFlexibleTopUpDecimalsAndUsage()
+    await testFlexibleTopUpBelowMinimumFails()
     console.log('Secure Processor service tests passed')
 }
 

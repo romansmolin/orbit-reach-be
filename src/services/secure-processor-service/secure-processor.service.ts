@@ -17,6 +17,11 @@ import {
     SecureProcessorPlanCode,
 } from './secure-processor.service.interface'
 import { UserPlans } from '@/shared/consts/plans'
+import {
+    FLEXIBLE_TOP_UP_MAX_CENTS,
+    FLEXIBLE_TOP_UP_MIN_CENTS,
+    calculateFlexibleTopUpUsage,
+} from './flexible-topup-calculator'
 
 type PlanPricing = { amount: number; currency: string; description: string }
 
@@ -44,7 +49,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         }
 
     private static readonly ADDON_PRICING: Record<
-        SecureProcessorAddonCode,
+        Exclude<SecureProcessorAddonCode, 'FLEX_TOP_UP'>,
         { amount: number; currency: string; description: string; usageDeltas: UsageDeltas }
     > = {
         EXTRA_SMALL: {
@@ -106,6 +111,10 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         }
 
         if (params.itemType === 'addon') {
+            if (params.addonCode === 'FLEX_TOP_UP') {
+                return this.createFlexibleTopUpCheckoutToken(params, userData.user.email)
+            }
+
             return this.createAddonCheckoutToken(params, userData.user.email)
         }
 
@@ -243,7 +252,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         return pricing
     }
 
-    private resolveAddonPricing(addonCode: SecureProcessorAddonCode): {
+    private resolveAddonPricing(addonCode: Exclude<SecureProcessorAddonCode, 'FLEX_TOP_UP'>): {
         amount: number
         currency: string
         description: string
@@ -576,8 +585,148 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         }
     }
 
+    private async createFlexibleTopUpCheckoutToken(
+        params: { userId: string; addonCode: 'FLEX_TOP_UP'; amount: number; currency?: 'EUR' },
+        email: string
+    ): Promise<CheckoutTokenResponse> {
+        const currency = params.currency ?? 'EUR'
+        const amountCents = this.normalizeFlexibleAmount(params.amount)
+        const usageDeltas = calculateFlexibleTopUpUsage(amountCents)
+        const plan = await this.userService.getUserPlan(params.userId)
+        const trackingId = this.buildAddonTrackingId(params.userId, params.addonCode)
+        const normalizedEmail = email.toLowerCase()
+
+        if (currency !== 'EUR') {
+            throw new BaseAppError('Only EUR payments are supported for this top-up', ErrorCode.BAD_REQUEST, 400)
+        }
+
+        if (!plan) {
+            throw new BaseAppError('Active plan is required before purchasing add-ons', ErrorCode.BAD_REQUEST, 400)
+        }
+
+        const description = `Flexible usage top-up (€${(amountCents / 100).toFixed(2)})`
+
+        const body = {
+            checkout: {
+                test: this.testMode,
+                transaction_type: 'payment',
+                iframe: true,
+                settings: {
+                    return_url: `${this.backendBaseUrl}/payments/secure-processor/return`,
+                    notification_url: `${this.backendBaseUrl}/payments/secure-processor/webhook`,
+                    language: 'en',
+                },
+                order: {
+                    currency,
+                    amount: amountCents,
+                    description,
+                    tracking_id: trackingId,
+                },
+            },
+            order: {
+                currency,
+                amount: amountCents,
+                description,
+                tracking_id: trackingId,
+            },
+            customer: {
+                email: normalizedEmail,
+            },
+            payment_method: {
+                types: ['credit_card'],
+            },
+        }
+
+        try {
+            const response = await this.apiClient.post<any>('/ctp/api/checkouts', body, {
+                headers: this.buildRequestHeaders(),
+            })
+
+            const token = response?.checkout?.token ?? response?.token
+
+            if (!token) {
+                throw new BaseAppError('Secure Processor did not return a checkout token', ErrorCode.UNKNOWN_ERROR, 502)
+            }
+
+            await this.repository.create({
+                token,
+                tenantId: params.userId,
+                planCode: plan.planName,
+                billingPeriod: plan.planType,
+                amount: amountCents,
+                currency,
+                description,
+                testMode: this.testMode,
+                status: 'created',
+                gatewayUid: response?.checkout?.uid ?? null,
+                trackingId,
+                itemType: 'addon',
+                addonCode: params.addonCode,
+                usageDeltas,
+            })
+
+            return {
+                token,
+                checkout: {
+                    token,
+                },
+            }
+        } catch (error: any) {
+            const message =
+                error instanceof BaseAppError
+                    ? error.message
+                    : error?.response?.data?.message || 'Failed to create flexible top-up checkout token'
+
+            this.logger.error('Secure Processor flexible top-up token creation failed', {
+                operation: 'createFlexibleTopUpCheckoutToken',
+                userId: params.userId,
+                amountCents,
+                currency,
+                error: error instanceof Error ? { name: error.name, message: error.message } : message,
+            })
+
+            if (error instanceof BaseAppError) {
+                throw error
+            }
+
+            throw new BaseAppError(message, ErrorCode.UNKNOWN_ERROR, 502)
+        }
+    }
+
+    private normalizeFlexibleAmount(amount: number): number {
+        if (!Number.isFinite(amount)) {
+            throw new BaseAppError('Payment amount must be a valid number', ErrorCode.BAD_REQUEST, 400)
+        }
+
+        const normalized = Number(amount.toFixed(2))
+
+        if (Math.abs(normalized - amount) > 0.000001) {
+            throw new BaseAppError('Amount must have at most two decimal places', ErrorCode.BAD_REQUEST, 400)
+        }
+
+        const cents = Math.round(normalized * 100)
+
+        if (cents < FLEXIBLE_TOP_UP_MIN_CENTS) {
+            throw new BaseAppError(
+                `Minimum top-up is ${(FLEXIBLE_TOP_UP_MIN_CENTS / 100).toFixed(2)} EUR`,
+                ErrorCode.BAD_REQUEST,
+                400
+            )
+        }
+
+        if (cents > FLEXIBLE_TOP_UP_MAX_CENTS) {
+            throw new BaseAppError(
+                `Maximum top-up is ${(FLEXIBLE_TOP_UP_MAX_CENTS / 100).toFixed(2)} EUR`,
+                ErrorCode.BAD_REQUEST,
+                400
+            )
+        }
+
+        return cents
+    }
+
     private async createAddonCheckoutToken(
-        params: { userId: string; addonCode: SecureProcessorAddonCode },
+        params: { userId: string; addonCode: Exclude<SecureProcessorAddonCode, 'FLEX_TOP_UP'> },
         email: string
     ): Promise<CheckoutTokenResponse> {
         const pricing = this.resolveAddonPricing(params.addonCode)

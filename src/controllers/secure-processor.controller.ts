@@ -7,6 +7,10 @@ import {
     SecureProcessorItemType,
     SecureProcessorPlanCode,
 } from '@/services/secure-processor-service'
+import {
+    FLEXIBLE_TOP_UP_MAX_CENTS,
+    FLEXIBLE_TOP_UP_MIN_CENTS,
+} from '@/services/secure-processor-service/flexible-topup-calculator'
 import { BaseAppError } from '@/shared/errors/base-error'
 import { ErrorCode } from '@/shared/consts/error-codes.const'
 import { ILogger } from '@/shared/infra/logger/logger.interface'
@@ -22,7 +26,18 @@ const addonTokenSchema = z.object({
     addonCode: z.enum(['EXTRA_SMALL', 'EXTRA_MEDIUM', 'EXTRA_LARGE']),
 })
 
-const createTokenSchema = z.union([planTokenSchema, addonTokenSchema])
+const flexibleAddonTokenSchema = z.object({
+    itemType: z.literal('addon'),
+    addonCode: z.literal('FLEX_TOP_UP'),
+    amount: z
+        .number()
+        .min(FLEXIBLE_TOP_UP_MIN_CENTS / 100)
+        .max(FLEXIBLE_TOP_UP_MAX_CENTS / 100)
+        .multipleOf(0.01),
+    currency: z.literal('EUR').optional(),
+})
+
+const createTokenSchema = z.union([planTokenSchema, addonTokenSchema, flexibleAddonTokenSchema])
 
 const returnQuerySchema = z.object({
     token: z.string().min(1),
@@ -52,7 +67,21 @@ export class SecureProcessorController {
             const itemType = (payload as { itemType?: SecureProcessorItemType }).itemType ?? 'plan'
 
             if (itemType === 'addon') {
-                const addonPayload = payload as { addonCode: SecureProcessorAddonCode }
+                const addonPayload = payload as { addonCode: SecureProcessorAddonCode; amount?: number; currency?: 'EUR' }
+
+                if (addonPayload.addonCode === 'FLEX_TOP_UP') {
+                    const result = await this.paymentService.createCheckoutToken({
+                        itemType: 'addon',
+                        userId: req.user.id,
+                        addonCode: 'FLEX_TOP_UP',
+                        amount: addonPayload.amount as number,
+                        currency: addonPayload.currency ?? 'EUR',
+                    })
+
+                    res.status(200).json(result)
+                    return
+                }
+
                 const result = await this.paymentService.createCheckoutToken({
                     itemType: 'addon',
                     userId: req.user.id,

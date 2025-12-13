@@ -3,7 +3,7 @@ import { PaymentTokenStatus } from '@/entities/payment-token'
 export type SecureProcessorPlanCode = 'STARTER' | 'PRO'
 export type SecureProcessorBillingPeriod = 'monthly' | 'yearly'
 export type SecureProcessorItemType = 'plan' | 'addon'
-export type SecureProcessorAddonCode = 'EXTRA_SMALL' | 'EXTRA_MEDIUM' | 'EXTRA_LARGE'
+export type SecureProcessorAddonCode = 'EXTRA_SMALL' | 'EXTRA_MEDIUM' | 'EXTRA_LARGE' | 'FLEX_TOP_UP'
 
 export interface CheckoutTokenResponse {
     token: string
@@ -27,7 +27,13 @@ export type CreatePlanCheckoutParams = {
 export type CreateAddonCheckoutParams = {
     itemType: 'addon'
     userId: string
-    addonCode: SecureProcessorAddonCode
+    addonCode: 'EXTRA_SMALL' | 'EXTRA_MEDIUM' | 'EXTRA_LARGE'
+} | {
+    itemType: 'addon'
+    userId: string
+    addonCode: 'FLEX_TOP_UP'
+    amount: number
+    currency?: 'EUR'
 }
 
 export type CreateCheckoutParams = CreatePlanCheckoutParams | CreateAddonCheckoutParams
