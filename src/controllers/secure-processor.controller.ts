@@ -24,6 +24,7 @@ const planTokenSchema = z.object({
 const addonTokenSchema = z.object({
     itemType: z.literal('addon'),
     addonCode: z.enum(['EXTRA_SMALL', 'EXTRA_MEDIUM', 'EXTRA_LARGE']),
+    promoCode: z.string().optional(),
 })
 
 const flexibleAddonTokenSchema = z.object({
@@ -35,6 +36,7 @@ const flexibleAddonTokenSchema = z.object({
         .max(FLEXIBLE_TOP_UP_MAX_CENTS / 100)
         .multipleOf(0.01),
     currency: z.literal('EUR').optional(),
+    promoCode: z.string().optional(),
 })
 
 const createTokenSchema = z.union([planTokenSchema, addonTokenSchema, flexibleAddonTokenSchema])
@@ -67,7 +69,7 @@ export class SecureProcessorController {
             const itemType = (payload as { itemType?: SecureProcessorItemType }).itemType ?? 'plan'
 
             if (itemType === 'addon') {
-                const addonPayload = payload as { addonCode: SecureProcessorAddonCode; amount?: number; currency?: 'EUR' }
+                const addonPayload = payload as { addonCode: SecureProcessorAddonCode; amount?: number; currency?: 'EUR'; promoCode?: string }
 
                 if (addonPayload.addonCode === 'FLEX_TOP_UP') {
                     const result = await this.paymentService.createCheckoutToken({
@@ -76,6 +78,7 @@ export class SecureProcessorController {
                         addonCode: 'FLEX_TOP_UP',
                         amount: addonPayload.amount as number,
                         currency: addonPayload.currency ?? 'EUR',
+                        promoCode: addonPayload.promoCode,
                     })
 
                     res.status(200).json(result)
@@ -86,6 +89,7 @@ export class SecureProcessorController {
                     itemType: 'addon',
                     userId: req.user.id,
                     addonCode: addonPayload.addonCode,
+                    promoCode: addonPayload.promoCode,
                 })
 
                 res.status(200).json(result)

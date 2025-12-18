@@ -437,6 +437,7 @@ export class UserController {
                 user: user.user,
                 quotaUsage: user.quotaUsage,
                 plan: user.plan,
+                defaultLimits: user.defaultLimits,
             })
         } catch (err) {
             next(err)

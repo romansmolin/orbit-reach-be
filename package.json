@@ -34,7 +34,8 @@
         "test:bullmq:audit": "ts-node -r tsconfig-paths/register src/test/audit-metrics.ts",
         "test:bullmq:monitor": "ts-node -r tsconfig-paths/register src/test/monitoring/test-dashboard.ts",
         "test:secure-processor": "ts-node -r tsconfig-paths/register tests/secure-processor.service.test.ts",
-        "test:usage-limits": "ts-node -r tsconfig-paths/register tests/usage-limits.test.ts"
+        "test:usage-limits": "ts-node -r tsconfig-paths/register tests/usage-limits.test.ts",
+        "test:addon-limits": "ts-node -r tsconfig-paths/register tests/addon-limits.test.ts"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.842.0",

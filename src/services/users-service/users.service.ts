@@ -21,7 +21,7 @@ const PLAN_LIMITS: Record<
     UserPlans,
     { sentPostsLimit: number; scheduledPostsLimit: number; accountsLimit: number; aiRequestsLimit: number }
 > = {
-    [UserPlans.FREE]: { sentPostsLimit: 30, scheduledPostsLimit: 10, accountsLimit: 1, aiRequestsLimit: 0 },
+    [UserPlans.FREE]: { sentPostsLimit: 130, scheduledPostsLimit: 100, accountsLimit: 10, aiRequestsLimit: 30 },
     [UserPlans.STARTER]: { sentPostsLimit: 300, scheduledPostsLimit: 200, accountsLimit: 10, aiRequestsLimit: 0 },
     [UserPlans.PRO]: { sentPostsLimit: 500, scheduledPostsLimit: 400, accountsLimit: 30, aiRequestsLimit: 50 },
 }
@@ -76,7 +76,7 @@ export class UserService implements IUserService {
                 isGoogleAuth = true
             }
 
-            const user = new User(uuidv4(), name, email, isGoogleAuth, hashedPassword, '', null, new Date())
+            const user = new User(uuidv4(), name, email, isGoogleAuth, hashedPassword, '', null, new Date(), 10, 130, 100, 30)
 
             const savedUser = await this.repository.save(user)
 
@@ -573,7 +573,11 @@ export class UserService implements IUserService {
                     hashedPassword,
                     picture || '',
                     null,
-                    new Date()
+                    new Date(),
+                    10, // defaultAccountLimit
+                    130, // defaultSentPostsLimit
+                    100, // defaultScheduledPostsLimit
+                    30 // defaultAiRequestsLimit
                 )
 
                 const savedUser = await this.repository.save(newUser)
@@ -628,6 +632,12 @@ export class UserService implements IUserService {
         user: UserSchema
         plan: UserPlanResponse | null
         quotaUsage: UserPlanUsageSummary
+        defaultLimits: {
+            accountsLimit: number | null
+            sentPostsLimit: number
+            scheduledPostsLimit: number
+            aiRequestsLimit: number
+        }
     } | null> {
         try {
             this.logger.debug('USER ID: ', { id })
@@ -684,6 +694,12 @@ export class UserService implements IUserService {
                 user: transformUser(user),
                 plan: planResponse,
                 quotaUsage: planResponse ? this.applyPlanLimitFallbacks(quotaUsage, planResponse) : quotaUsage,
+                defaultLimits: {
+                    accountsLimit: user.defaultAccountLimit,
+                    sentPostsLimit: user.defaultSentPostsLimit,
+                    scheduledPostsLimit: user.defaultScheduledPostsLimit,
+                    aiRequestsLimit: user.defaultAiRequestsLimit,
+                },
             }
         } catch (error) {
             if (error instanceof BaseAppError) throw error

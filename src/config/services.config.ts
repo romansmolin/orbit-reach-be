@@ -34,6 +34,8 @@ import { SocialMediaPublisherFactory } from '@/services/social-media/factories/s
 import { ImageProcessor } from '@/shared/infra/media/image-processor'
 import { PaymentTokensRepository } from '@/repositories/payment-tokens-repository'
 import { SecureProcessorPaymentService } from '@/services/secure-processor-service'
+import { PromoCodesRepository } from '@/repositories/promo-codes-repository'
+import { PromoCodesService } from '@/services/promo-codes-service/promo-codes.service'
 
 export interface Services {
     postRepository: PostsRepository
@@ -88,10 +90,14 @@ export function initializeServices() {
     const userService = new UserService(userRepository, stripeService, logger, emailService)
     const tenantSettingsService = new TenantSettingsService(tenantSettingsRepository)
     const platformQuotaService = new PlatformQuotaService(platformUsageRepository)
+    const promoCodesRepository = new PromoCodesRepository()
+    const promoCodesService = new PromoCodesService(promoCodesRepository)
     const secureProcessorPaymentService = new SecureProcessorPaymentService(
         paymentTokensRepository,
         userService,
-        logger
+        logger,
+        undefined,
+        promoCodesService
     )
 
     const socialMediaErrorHandler = new SocialMediaErrorHandler(logger, postRepository)

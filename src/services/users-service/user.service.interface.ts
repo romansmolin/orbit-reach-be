@@ -51,6 +51,12 @@ export interface IUserService {
         user: UserSchema
         plan: UserPlanResponse | null
         quotaUsage: UserPlanUsageSummary
+        defaultLimits: {
+            accountsLimit: number | null
+            sentPostsLimit: number
+            scheduledPostsLimit: number
+            aiRequestsLimit: number
+        }
     } | null>
     updateCustomerPlan(
         userId: string,

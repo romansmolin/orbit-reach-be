@@ -1,6 +1,6 @@
 import { Pool } from 'pg'
 import { pgClient } from '@/db-connection'
-import { PaymentToken, PaymentTokenStatus } from '@/entities/payment-token'
+import { PaymentToken, PaymentTokenStatus, PaymentTokenItemType } from '@/entities/payment-token'
 import { BaseAppError } from '@/shared/errors/base-error'
 import { ErrorCode } from '@/shared/consts/error-codes.const'
 import {
@@ -36,7 +36,10 @@ export class PaymentTokensRepository implements IPaymentTokensRepository {
             row.updated_at,
             row.item_type ?? 'plan',
             row.addon_code ?? null,
-            row.usage_deltas ?? null
+            row.usage_deltas ?? null,
+            row.promo_code_id ?? null,
+            row.original_amount !== null ? Number(row.original_amount) : null,
+            row.discount_amount !== null ? Number(row.discount_amount) : 0
         )
     }
 
@@ -59,9 +62,12 @@ export class PaymentTokensRepository implements IPaymentTokensRepository {
                     raw_payload,
                     item_type,
                     addon_code,
-                    usage_deltas
+                    usage_deltas,
+                    promo_code_id,
+                    original_amount,
+                    discount_amount
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
                 RETURNING *
                 `,
                 [
@@ -80,6 +86,9 @@ export class PaymentTokensRepository implements IPaymentTokensRepository {
                     data.itemType ?? 'plan',
                     data.addonCode ?? null,
                     data.usageDeltas ?? null,
+                    data.promoCodeId ?? null,
+                    data.originalAmount ?? null,
+                    data.discountAmount ?? 0,
                 ]
             )
 
@@ -165,6 +174,38 @@ export class PaymentTokensRepository implements IPaymentTokensRepository {
         } catch (error: any) {
             throw new BaseAppError(
                 `Failed to update payment token: ${error.message ?? 'unknown error'}`,
+                ErrorCode.UNKNOWN_ERROR,
+                500
+            )
+        }
+    }
+
+    async findByTenantId(tenantId: string, filters?: { status?: PaymentTokenStatus; itemType?: PaymentTokenItemType }): Promise<PaymentToken[]> {
+        try {
+            let query = 'SELECT * FROM payment_tokens WHERE tenant_id = $1'
+            const params: any[] = [tenantId]
+            let paramCount = 1
+
+            if (filters?.status) {
+                paramCount++
+                query += ` AND status = $${paramCount}`
+                params.push(filters.status)
+            }
+
+            if (filters?.itemType) {
+                paramCount++
+                query += ` AND item_type = $${paramCount}`
+                params.push(filters.itemType)
+            }
+
+            query += ' ORDER BY created_at DESC'
+
+            const result = await this.client.query(query, params)
+
+            return result.rows.map((row) => this.mapRow(row))
+        } catch (error: any) {
+            throw new BaseAppError(
+                `Failed to fetch payment tokens: ${error.message ?? 'unknown error'}`,
                 ErrorCode.UNKNOWN_ERROR,
                 500
             )

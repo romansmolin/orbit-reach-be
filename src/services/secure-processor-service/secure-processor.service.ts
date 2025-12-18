@@ -7,6 +7,7 @@ import { getEnvVar } from '@/shared/utils/get-env-var'
 import { IPaymentTokensRepository } from '@/repositories/payment-tokens-repository'
 import { IUserService } from '@/services/users-service/user.service.interface'
 import { PaymentToken, PaymentTokenStatus, UsageDeltas } from '@/entities/payment-token'
+import { IPromoCodesService } from '@/services/promo-codes-service/promo-codes.service.interface'
 import {
     CheckoutTokenResponse,
     CreateCheckoutParams,
@@ -83,12 +84,14 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     private readonly backendBaseUrl: string
     private readonly frontendBaseUrl: string
     private readonly authHeader: string
+    private readonly promoCodesService?: IPromoCodesService
 
     constructor(
         repository: IPaymentTokensRepository,
         userService: IUserService,
         logger: ILogger,
-        apiClient: IApiClient = new AxiosApiClient('https://checkout.secure-processor.com')
+        apiClient: IApiClient = new AxiosApiClient('https://checkout.secure-processor.com'),
+        promoCodesService?: IPromoCodesService
     ) {
         this.repository = repository
         this.userService = userService
@@ -101,6 +104,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         this.backendBaseUrl = this.resolveBackendBaseUrl()
         this.frontendBaseUrl = this.resolveFrontendBaseUrl()
         this.authHeader = `Basic ${Buffer.from(`${this.shopId}:${this.secretKey}`).toString('base64')}`
+        this.promoCodesService = promoCodesService
     }
 
     async createCheckoutToken(params: CreateCheckoutParams): Promise<CheckoutTokenResponse> {
@@ -220,14 +224,25 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                     aiRequests: deltas?.aiRequests ?? 0,
                 },
             })
+
+            if (record.promoCodeId && this.promoCodesService) {
+                try {
+                    await this.promoCodesService.recordUsage(record.promoCodeId)
+                } catch (error) {
+                    this.logger.error('Failed to record promo code usage', {
+                        operation: 'applyFulfillment',
+                        promoCodeId: record.promoCodeId,
+                        error: error instanceof Error ? { name: error.name, message: error.message } : undefined,
+                    })
+                }
+            }
             return
         }
 
-        await this.userService.updateCustomerPlan(record.tenantId, {
-            name: record.planCode,
-            planType: record.billingPeriod,
-            billingStatus: 'active',
-            subscriptionStatus: 'active',
+        // Plans are no longer supported
+        this.logger.warn('Attempted to apply plan fulfillment, but plans are no longer supported', {
+            operation: 'applyFulfillment',
+            recordId: record.id,
         })
     }
 
@@ -586,7 +601,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     }
 
     private async createFlexibleTopUpCheckoutToken(
-        params: { userId: string; addonCode: 'FLEX_TOP_UP'; amount: number; currency?: 'EUR' },
+        params: { userId: string; addonCode: 'FLEX_TOP_UP'; amount: number; currency?: 'EUR'; promoCode?: string },
         email: string
     ): Promise<CheckoutTokenResponse> {
         const currency = params.currency ?? 'EUR'
@@ -604,7 +619,26 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
             throw new BaseAppError('Active plan is required before purchasing add-ons', ErrorCode.BAD_REQUEST, 400)
         }
 
-        const description = `Flexible usage top-up (€${(amountCents / 100).toFixed(2)})`
+        let originalAmount = amountCents
+        let finalAmount = amountCents
+        let discountAmount = 0
+        let promoCodeId: string | null = null
+
+        if (params.promoCode && this.promoCodesService) {
+            try {
+                const promoResult = await this.promoCodesService.validateAndApply(params.promoCode, originalAmount)
+                finalAmount = promoResult.finalAmount
+                discountAmount = promoResult.discountAmount
+                promoCodeId = promoResult.promoCode.id
+            } catch (error) {
+                if (error instanceof BaseAppError) {
+                    throw error
+                }
+                throw new BaseAppError('Failed to apply promo code', ErrorCode.UNKNOWN_ERROR, 500)
+            }
+        }
+
+        const description = `Flexible usage top-up (€${(finalAmount / 100).toFixed(2)})`
 
         const body = {
             checkout: {
@@ -618,14 +652,14 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                 },
                 order: {
                     currency,
-                    amount: amountCents,
+                    amount: finalAmount,
                     description,
                     tracking_id: trackingId,
                 },
             },
             order: {
                 currency,
-                amount: amountCents,
+                amount: finalAmount,
                 description,
                 tracking_id: trackingId,
             },
@@ -653,7 +687,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                 tenantId: params.userId,
                 planCode: plan.planName,
                 billingPeriod: plan.planType,
-                amount: amountCents,
+                amount: finalAmount,
                 currency,
                 description,
                 testMode: this.testMode,
@@ -663,6 +697,9 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                 itemType: 'addon',
                 addonCode: params.addonCode,
                 usageDeltas,
+                promoCodeId,
+                originalAmount: discountAmount > 0 ? originalAmount : null,
+                discountAmount,
             })
 
             return {
@@ -726,7 +763,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     }
 
     private async createAddonCheckoutToken(
-        params: { userId: string; addonCode: Exclude<SecureProcessorAddonCode, 'FLEX_TOP_UP'> },
+        params: { userId: string; addonCode: Exclude<SecureProcessorAddonCode, 'FLEX_TOP_UP'>; promoCode?: string },
         email: string
     ): Promise<CheckoutTokenResponse> {
         const pricing = this.resolveAddonPricing(params.addonCode)
@@ -736,6 +773,25 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
 
         if (!plan) {
             throw new BaseAppError('Active plan is required before purchasing add-ons', ErrorCode.BAD_REQUEST, 400)
+        }
+
+        let originalAmount = pricing.amount
+        let finalAmount = pricing.amount
+        let discountAmount = 0
+        let promoCodeId: string | null = null
+
+        if (params.promoCode && this.promoCodesService) {
+            try {
+                const promoResult = await this.promoCodesService.validateAndApply(params.promoCode, originalAmount)
+                finalAmount = promoResult.finalAmount
+                discountAmount = promoResult.discountAmount
+                promoCodeId = promoResult.promoCode.id
+            } catch (error) {
+                if (error instanceof BaseAppError) {
+                    throw error
+                }
+                throw new BaseAppError('Failed to apply promo code', ErrorCode.UNKNOWN_ERROR, 500)
+            }
         }
 
         const body = {
@@ -750,14 +806,14 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                 },
                 order: {
                     currency: pricing.currency,
-                    amount: pricing.amount,
+                    amount: finalAmount,
                     description: pricing.description,
                     tracking_id: trackingId,
                 },
             },
             order: {
                 currency: pricing.currency,
-                amount: pricing.amount,
+                amount: finalAmount,
                 description: pricing.description,
                 tracking_id: trackingId,
             },
@@ -785,7 +841,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                 tenantId: params.userId,
                 planCode: plan.planName,
                 billingPeriod: plan.planType,
-                amount: pricing.amount,
+                amount: finalAmount,
                 currency: pricing.currency,
                 description: pricing.description,
                 testMode: this.testMode,
@@ -795,6 +851,9 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                 itemType: 'addon',
                 addonCode: params.addonCode,
                 usageDeltas: pricing.usageDeltas,
+                promoCodeId,
+                originalAmount: discountAmount > 0 ? originalAmount : null,
+                discountAmount,
             })
 
             return {

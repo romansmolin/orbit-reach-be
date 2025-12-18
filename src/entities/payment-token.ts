@@ -29,6 +29,9 @@ export class PaymentToken {
         public readonly updatedAt: Date,
         public readonly itemType: PaymentTokenItemType,
         public readonly addonCode: string | null,
-        public readonly usageDeltas: UsageDeltas | null
+        public readonly usageDeltas: UsageDeltas | null,
+        public readonly promoCodeId: string | null,
+        public readonly originalAmount: number | null,
+        public readonly discountAmount: number
     ) {}
 }

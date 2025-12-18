@@ -7,7 +7,11 @@ export class Tenant {
         public readonly password: string,
         public readonly avatar: string,
         public readonly refreshToken: string | null,
-        public readonly createdAt: Date
+        public readonly createdAt: Date,
+        public readonly defaultAccountLimit: number | null,
+        public readonly defaultSentPostsLimit: number,
+        public readonly defaultScheduledPostsLimit: number,
+        public readonly defaultAiRequestsLimit: number
     ) {}
 }
 
@@ -21,9 +25,13 @@ export class User extends Tenant {
         password: string,
         avatar: string,
         refreshToken: string | null,
-        createdAt: Date
+        createdAt: Date,
+        defaultAccountLimit: number | null = null,
+        defaultSentPostsLimit: number = 130,
+        defaultScheduledPostsLimit: number = 100,
+        defaultAiRequestsLimit: number = 30
     ) {
-        super(id, name, email, googleAuth, password, avatar, refreshToken, createdAt)
+        super(id, name, email, googleAuth, password, avatar, refreshToken, createdAt, defaultAccountLimit, defaultSentPostsLimit, defaultScheduledPostsLimit, defaultAiRequestsLimit)
     }
 
     // Legacy properties for compatibility

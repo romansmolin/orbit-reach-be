@@ -28,12 +28,14 @@ export type CreateAddonCheckoutParams = {
     itemType: 'addon'
     userId: string
     addonCode: 'EXTRA_SMALL' | 'EXTRA_MEDIUM' | 'EXTRA_LARGE'
+    promoCode?: string
 } | {
     itemType: 'addon'
     userId: string
     addonCode: 'FLEX_TOP_UP'
     amount: number
     currency?: 'EUR'
+    promoCode?: string
 }
 
 export type CreateCheckoutParams = CreatePlanCheckoutParams | CreateAddonCheckoutParams

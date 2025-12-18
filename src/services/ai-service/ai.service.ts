@@ -143,7 +143,7 @@ export class AiService implements IAiService {
         this.logger = logger
         this.userService = userService
         this.apiKey = options?.apiKey || process.env.OPENAI_API_KEY || ''
-        this.model = options?.model || process.env.OPENAI_CONTENT_MODEL || 'gpt-4o-mini'
+        this.model = options?.model || process.env.OPENAI_CONTENT_MODEL || 'gpt-4.1'
         this.envLimits = this.loadEnvLimits()
 
         const missingLimits = Object.entries(this.envLimits)

@@ -117,7 +117,11 @@ export class UserRepository implements IUserRepository {
                 tenant.password,
                 tenant.avatar || '',
                 tenant.refresh_token || null,
-                tenant.created_at
+                tenant.created_at,
+                tenant.default_account_limit ?? null,
+                tenant.default_sent_posts_limit ?? 130,
+                tenant.default_scheduled_posts_limit ?? 100,
+                tenant.default_ai_requests_limit ?? 30
             )
         } catch (error: any) {
             throw new BaseAppError(`Failed to find user by email: ${error.message}`, ErrorCode.UNKNOWN_ERROR, 500)
@@ -142,7 +146,11 @@ export class UserRepository implements IUserRepository {
                 tenant.password,
                 tenant.avatar || '',
                 tenant.refresh_token || null,
-                tenant.created_at
+                tenant.created_at,
+                tenant.default_account_limit ?? null,
+                tenant.default_sent_posts_limit ?? 130,
+                tenant.default_scheduled_posts_limit ?? 100,
+                tenant.default_ai_requests_limit ?? 30
             )
         } catch (error: any) {
             throw new BaseAppError(
@@ -171,7 +179,11 @@ export class UserRepository implements IUserRepository {
                 tenant.password,
                 tenant.avatar || '',
                 tenant.refresh_token || null,
-                tenant.created_at
+                tenant.created_at,
+                tenant.default_account_limit ?? null,
+                tenant.default_sent_posts_limit ?? 130,
+                tenant.default_scheduled_posts_limit ?? 100,
+                tenant.default_ai_requests_limit ?? 30
             )
         } catch (error: any) {
             if (error instanceof BaseAppError) throw error
@@ -185,10 +197,22 @@ export class UserRepository implements IUserRepository {
             await client.query('BEGIN')
 
             const result = await client.query(
-                `INSERT INTO tenants (id, name, email, google_auth, password, avatar, refresh_token)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                `INSERT INTO tenants (id, name, email, google_auth, password, avatar, refresh_token, default_account_limit, default_sent_posts_limit, default_scheduled_posts_limit, default_ai_requests_limit)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                  RETURNING *`,
-                [user.id, user.name, user.email, user.googleAuth, user.password, user.avatar, user.refreshToken]
+                [
+                    user.id,
+                    user.name,
+                    user.email,
+                    user.googleAuth,
+                    user.password,
+                    user.avatar,
+                    user.refreshToken,
+                    user.defaultAccountLimit,
+                    user.defaultSentPostsLimit,
+                    user.defaultScheduledPostsLimit,
+                    user.defaultAiRequestsLimit,
+                ]
             )
 
             await client.query('COMMIT')
@@ -203,7 +227,11 @@ export class UserRepository implements IUserRepository {
                 savedTenant.password,
                 savedTenant.avatar || '',
                 savedTenant.refresh_token || null,
-                savedTenant.created_at
+                savedTenant.created_at,
+                savedTenant.default_account_limit ?? null,
+                savedTenant.default_sent_posts_limit ?? 130,
+                savedTenant.default_scheduled_posts_limit ?? 100,
+                savedTenant.default_ai_requests_limit ?? 30
             )
         } catch (error: any) {
             await client.query('ROLLBACK')
