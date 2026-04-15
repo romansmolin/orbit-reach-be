@@ -609,15 +609,27 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     private buildRedirectUrl(status: PaymentTokenStatus, token: string): string {
         const searchParams = new URLSearchParams({ status, token }).toString()
 
+        let destination: 'success' | 'pending' | 'failed'
         if (status === 'successful') {
-            return `${this.frontendBaseUrl}/payments/secure-processor/success?${searchParams}`
+            destination = 'success'
+        } else if (status === 'pending') {
+            destination = 'pending'
+        } else {
+            destination = 'failed'
         }
 
-        if (status === 'pending') {
-            return `${this.frontendBaseUrl}/payments/secure-processor/pending?${searchParams}`
-        }
+        const redirectUrl = `${this.frontendBaseUrl}/payments/secure-processor/${destination}?${searchParams}`
 
-        return `${this.frontendBaseUrl}/payments/secure-processor/failed?${searchParams}`
+        this.logger.info('Secure Processor redirect URL built', {
+            operation: 'buildRedirectUrl',
+            status,
+            destination,
+            token,
+            frontendBaseUrl: this.frontendBaseUrl,
+            redirectUrl,
+        })
+
+        return redirectUrl
     }
 
     private async createPlanCheckoutToken(
