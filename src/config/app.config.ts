@@ -26,6 +26,7 @@ export function createApp(logger: ILogger) {
         'http://127.0.0.1:4040',
         'https://obitreach.com',
         'https://www.obitreach.com',
+        'https://checkout.secure-processor.com',
     ]
 
     const envOrigins = [process.env.FRONTEND_URL].filter(Boolean).flatMap((value) =>
