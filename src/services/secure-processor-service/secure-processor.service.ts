@@ -493,9 +493,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                     : undefined
 
         const currency = order.currency ?? root.currency ?? payment.currency ?? null
-        const testMode = Boolean(
-            root.test ?? payload?.test ?? payment.test ?? root.settings?.test ?? payload?.settings?.test
-        )
+        const testMode = false
 
         return {
             token,
