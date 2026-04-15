@@ -163,24 +163,99 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     }
 
     async processWebhook(rawPayload: Buffer, headers: { authorization?: string; contentSignature?: string }): Promise<void> {
-        this.verifyBasicAuth(headers.authorization)
-        this.verifySignature(rawPayload, headers.contentSignature)
+        try {
+            this.verifyBasicAuth(headers.authorization)
+        } catch (error) {
+            this.logger.error('Secure Processor webhook basic auth failed', {
+                operation: 'processWebhook',
+                providedAuthPrefix: headers.authorization?.slice(0, 12) ?? null,
+                error: error instanceof Error ? { name: error.name, message: error.message } : undefined,
+            })
+            throw error
+        }
 
-        let parsed: unknown
+        try {
+            this.verifySignature(rawPayload, headers.contentSignature)
+        } catch (error) {
+            this.logger.error('Secure Processor webhook signature verification failed', {
+                operation: 'processWebhook',
+                hasSignatureHeader: Boolean(headers.contentSignature),
+                bodyLength: rawPayload.length,
+                error: error instanceof Error ? { name: error.name, message: error.message } : undefined,
+            })
+            throw error
+        }
+
+        let parsed: any
         try {
             parsed = JSON.parse(rawPayload.toString('utf-8'))
         } catch {
+            this.logger.error('Secure Processor webhook payload is not valid JSON', {
+                operation: 'processWebhook',
+                rawBodyPreview: rawPayload.toString('utf-8').slice(0, 1000),
+            })
             throw new BaseAppError('Webhook payload is not valid JSON', ErrorCode.BAD_REQUEST, 400)
         }
 
+        this.logger.info('Secure Processor webhook payload parsed', {
+            operation: 'processWebhook',
+            topLevelKeys: Object.keys(parsed ?? {}),
+            hasCheckout: Boolean(parsed?.checkout),
+            hasTransaction: Boolean(parsed?.transaction),
+            rawPayload: parsed,
+        })
+
         const checkout = this.extractCheckoutDetails(parsed)
-        const record = await this.resolveWebhookRecord(checkout)
+
+        this.logger.info('Secure Processor webhook details extracted', {
+            operation: 'processWebhook',
+            token: checkout.token,
+            trackingId: checkout.trackingId,
+            uid: checkout.uid,
+            status: checkout.status,
+            amount: checkout.amount,
+            currency: checkout.currency,
+            testMode: checkout.testMode,
+        })
+
+        let record: PaymentToken
+        try {
+            record = await this.resolveWebhookRecord(checkout)
+        } catch (error) {
+            this.logger.error('Secure Processor webhook record resolution failed', {
+                operation: 'processWebhook',
+                token: checkout.token,
+                trackingId: checkout.trackingId,
+                uid: checkout.uid,
+                error: error instanceof Error ? { name: error.name, message: error.message } : undefined,
+            })
+            throw error
+        }
+
+        this.logger.info('Secure Processor webhook record resolved', {
+            operation: 'processWebhook',
+            recordId: record.id,
+            recordToken: record.token,
+            recordStatus: record.status,
+            recordTrackingId: record.trackingId,
+            recordGatewayUid: record.gatewayUid,
+            incomingStatus: checkout.status,
+        })
 
         this.ensurePayloadConsistency(record, checkout)
 
-        await this.applyStatusUpdate(record, checkout.status ?? 'pending', {
+        const nextStatus = checkout.status ?? 'pending'
+        await this.applyStatusUpdate(record, nextStatus, {
             gatewayUid: checkout.uid ?? record.gatewayUid ?? null,
             rawPayload: parsed,
+        })
+
+        this.logger.info('Secure Processor webhook status applied', {
+            operation: 'processWebhook',
+            recordId: record.id,
+            previousStatus: record.status,
+            newStatus: nextStatus,
+            fulfillmentTriggered: nextStatus === 'successful' && record.status !== 'successful',
         })
     }
 

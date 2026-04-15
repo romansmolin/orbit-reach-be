@@ -112,6 +112,13 @@ export class SecureProcessorController {
 
     async handleReturn(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
+            this.logger.info('Secure Processor return hit', {
+                operation: 'handleReturn',
+                query: req.query,
+                ip: req.ip,
+                userAgent: req.headers['user-agent'],
+            })
+
             const parsed = returnQuerySchema.safeParse({
                 token: req.query.token,
                 status: req.query.status,
@@ -119,6 +126,11 @@ export class SecureProcessorController {
             })
 
             if (!parsed.success) {
+                this.logger.warn('Secure Processor return payload failed validation', {
+                    operation: 'handleReturn',
+                    issues: parsed.error.issues,
+                    query: req.query,
+                })
                 throw new BaseAppError('Invalid return parameters', ErrorCode.BAD_REQUEST, 400)
             }
 
@@ -126,6 +138,13 @@ export class SecureProcessorController {
                 token: parsed.data.token,
                 status: parsed.data.status,
                 uid: parsed.data.uid,
+            })
+
+            this.logger.info('Secure Processor return resolved', {
+                operation: 'handleReturn',
+                token: parsed.data.token,
+                incomingStatus: parsed.data.status,
+                redirectUrl: result.redirectUrl,
             })
 
             res.redirect(result.redirectUrl)
@@ -157,7 +176,22 @@ export class SecureProcessorController {
     }
 
     async handleWebhook(req: Request, res: Response, next: NextFunction): Promise<void> {
+        const receivedAt = new Date().toISOString()
         try {
+            this.logger.info('Secure Processor webhook received', {
+                operation: 'handleWebhook',
+                receivedAt,
+                ip: req.ip,
+                userAgent: req.headers['user-agent'],
+                hasAuth: Boolean(req.headers.authorization),
+                hasSignature: Boolean(req.headers['content-signature']),
+                bodyIsBuffer: Buffer.isBuffer(req.body),
+                bodyLength: Buffer.isBuffer(req.body) ? req.body.length : undefined,
+                rawBodyPreview: Buffer.isBuffer(req.body)
+                    ? req.body.toString('utf-8').slice(0, 2000)
+                    : undefined,
+            })
+
             if (!Buffer.isBuffer(req.body)) {
                 throw new BaseAppError('Webhook payload must be a raw buffer', ErrorCode.BAD_REQUEST, 400)
             }
@@ -173,11 +207,21 @@ export class SecureProcessorController {
                 contentSignature: contentSignature ?? undefined,
             })
 
+            this.logger.info('Secure Processor webhook processed successfully', {
+                operation: 'handleWebhook',
+                receivedAt,
+            })
+
             res.status(200).json({ received: true })
         } catch (error) {
             if (error instanceof Error) {
                 this.logger.error('Secure Processor webhook handling failed', {
-                    error: { name: error.name, message: error.message },
+                    operation: 'handleWebhook',
+                    receivedAt,
+                    error: { name: error.name, message: error.message, stack: error.stack },
+                    rawBodyPreview: Buffer.isBuffer(req.body)
+                        ? req.body.toString('utf-8').slice(0, 2000)
+                        : undefined,
                 })
             }
             next(error)
