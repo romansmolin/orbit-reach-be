@@ -584,7 +584,12 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         }
 
         if (checkout.testMode !== undefined && Boolean(checkout.testMode) !== Boolean(record.testMode)) {
-            mismatches.push('test flag')
+            this.logger.warn('Secure Processor test flag mismatch (non-fatal)', {
+                operation: 'ensurePayloadConsistency',
+                recordToken: record.token,
+                recordTestMode: record.testMode,
+                gatewayTestMode: checkout.testMode,
+            })
         }
 
         if (mismatches.length > 0) {
