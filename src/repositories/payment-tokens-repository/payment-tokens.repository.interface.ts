@@ -34,6 +34,8 @@ export interface PaymentTokenUpdateInput {
 export interface IPaymentTokensRepository {
     create(data: PaymentTokenCreateInput): Promise<PaymentToken>
     findByToken(token: string): Promise<PaymentToken | null>
+    findByTrackingId(trackingId: string): Promise<PaymentToken | null>
+    findByGatewayUid(gatewayUid: string): Promise<PaymentToken | null>
     updateByToken(token: string, updates: PaymentTokenUpdateInput): Promise<PaymentToken | null>
     findByTenantId(tenantId: string, filters?: { status?: PaymentTokenStatus; itemType?: PaymentTokenItemType }): Promise<PaymentToken[]>
 }

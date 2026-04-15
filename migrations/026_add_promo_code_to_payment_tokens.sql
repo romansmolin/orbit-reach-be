@@ -13,3 +13,6 @@ CREATE INDEX idx_payment_tokens_promo_code ON payment_tokens (promo_code_id);
 
 COMMIT;
 
+
+
+

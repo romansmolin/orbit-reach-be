@@ -27,7 +27,8 @@ import {
 type PlanPricing = { amount: number; currency: string; description: string }
 
 type CheckoutDetails = {
-    token: string
+    token: string | null
+    trackingId: string | null
     status: PaymentTokenStatus | null
     uid: string | null
     amount?: number
@@ -173,7 +174,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         }
 
         const checkout = this.extractCheckoutDetails(parsed)
-        const record = await this.requireTokenRecord(checkout.token)
+        const record = await this.resolveWebhookRecord(checkout)
 
         this.ensurePayloadConsistency(record, checkout)
 
@@ -390,34 +391,40 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     }
 
     private extractCheckoutDetails(payload: any): CheckoutDetails {
-        const checkout = payload?.checkout ?? payload ?? {}
-        const order = checkout.order ?? payload?.order ?? {}
-        const gatewayResponse = checkout.gateway_response ?? payload?.gateway_response ?? {}
-        const payment = gatewayResponse.payment ?? checkout.payment ?? payload?.payment ?? {}
+        const checkout = payload?.checkout ?? {}
+        const transaction = payload?.transaction ?? {}
+        const root = Object.keys(checkout).length > 0 ? checkout : Object.keys(transaction).length > 0 ? transaction : payload ?? {}
+        const order = root.order ?? payload?.order ?? {}
+        const gatewayResponse = root.gateway_response ?? payload?.gateway_response ?? {}
+        const payment = gatewayResponse.payment ?? root.payment ?? payload?.payment ?? {}
 
-        const token = checkout.token ?? payment.token ?? payload?.token
-        const status = this.normalizeStatus(payment.status ?? checkout.status ?? payload?.status ?? gatewayResponse.status)
-        const uid = payment.uid ?? checkout.uid ?? gatewayResponse.uid ?? payload?.uid ?? null
+        const token = root.token ?? payment.token ?? payload?.token ?? null
+        const trackingId =
+            root.tracking_id ??
+            order.tracking_id ??
+            payment.tracking_id ??
+            gatewayResponse.tracking_id ??
+            payload?.tracking_id ??
+            null
+        const status = this.normalizeStatus(payment.status ?? root.status ?? payload?.status ?? gatewayResponse.status)
+        const uid = payment.uid ?? root.uid ?? gatewayResponse.uid ?? payload?.uid ?? null
         const amount =
             typeof order.amount === 'number'
                 ? order.amount
-                : typeof checkout.amount === 'number'
-                  ? checkout.amount
+                : typeof root.amount === 'number'
+                  ? root.amount
                   : typeof payment.amount === 'number'
                     ? payment.amount
                     : undefined
 
-        const currency = order.currency ?? checkout.currency ?? payment.currency ?? null
+        const currency = order.currency ?? root.currency ?? payment.currency ?? null
         const testMode = Boolean(
-            checkout.test ?? payload?.test ?? payment.test ?? checkout.settings?.test ?? payload?.settings?.test
+            root.test ?? payload?.test ?? payment.test ?? root.settings?.test ?? payload?.settings?.test
         )
-
-        if (!token) {
-            throw new BaseAppError('Checkout token is missing in webhook payload', ErrorCode.BAD_REQUEST, 400)
-        }
 
         return {
             token,
+            trackingId,
             status,
             uid,
             amount,
@@ -425,6 +432,29 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
             testMode,
             rawPayload: payload,
         }
+    }
+
+    private async resolveWebhookRecord(checkout: CheckoutDetails): Promise<PaymentToken> {
+        if (checkout.token) {
+            const byToken = await this.repository.findByToken(checkout.token)
+            if (byToken) return byToken
+        }
+
+        if (checkout.trackingId) {
+            const byTracking = await this.repository.findByTrackingId(checkout.trackingId)
+            if (byTracking) return byTracking
+        }
+
+        if (checkout.uid) {
+            const byUid = await this.repository.findByGatewayUid(checkout.uid)
+            if (byUid) return byUid
+        }
+
+        throw new BaseAppError(
+            'Payment record not found for webhook (missing token/tracking_id/uid)',
+            ErrorCode.NOT_FOUND,
+            404
+        )
     }
 
     private async queryCheckoutStatus(token: string): Promise<CheckoutDetails> {
@@ -448,6 +478,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
 
             return {
                 token,
+                trackingId: order.tracking_id ?? checkout.tracking_id ?? null,
                 status,
                 uid,
                 amount,
@@ -533,18 +564,12 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                     description: pricing.description,
                     tracking_id: trackingId,
                 },
-            },
-            order: {
-                currency: pricing.currency,
-                amount: pricing.amount,
-                description: pricing.description,
-                tracking_id: trackingId,
-            },
-            customer: {
-                email: normalizedEmail,
-            },
-            payment_method: {
-                types: ['credit_card'],
+                customer: {
+                    email: normalizedEmail,
+                },
+                payment_method: {
+                    types: ['credit_card'],
+                },
             },
         }
 
@@ -656,18 +681,12 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                     description,
                     tracking_id: trackingId,
                 },
-            },
-            order: {
-                currency,
-                amount: finalAmount,
-                description,
-                tracking_id: trackingId,
-            },
-            customer: {
-                email: normalizedEmail,
-            },
-            payment_method: {
-                types: ['credit_card'],
+                customer: {
+                    email: normalizedEmail,
+                },
+                payment_method: {
+                    types: ['credit_card'],
+                },
             },
         }
 
@@ -810,18 +829,12 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                     description: pricing.description,
                     tracking_id: trackingId,
                 },
-            },
-            order: {
-                currency: pricing.currency,
-                amount: finalAmount,
-                description: pricing.description,
-                tracking_id: trackingId,
-            },
-            customer: {
-                email: normalizedEmail,
-            },
-            payment_method: {
-                types: ['credit_card'],
+                customer: {
+                    email: normalizedEmail,
+                },
+                payment_method: {
+                    types: ['credit_card'],
+                },
             },
         }
 

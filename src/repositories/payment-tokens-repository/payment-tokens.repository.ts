@@ -119,6 +119,46 @@ export class PaymentTokensRepository implements IPaymentTokensRepository {
         }
     }
 
+    async findByTrackingId(trackingId: string): Promise<PaymentToken | null> {
+        try {
+            const result = await this.client.query(
+                `SELECT * FROM payment_tokens WHERE tracking_id = $1 ORDER BY created_at DESC LIMIT 1`,
+                [trackingId]
+            )
+            if (!result.rows[0]) {
+                return null
+            }
+
+            return this.mapRow(result.rows[0])
+        } catch (error: any) {
+            throw new BaseAppError(
+                `Failed to fetch payment token: ${error.message ?? 'unknown error'}`,
+                ErrorCode.UNKNOWN_ERROR,
+                500
+            )
+        }
+    }
+
+    async findByGatewayUid(gatewayUid: string): Promise<PaymentToken | null> {
+        try {
+            const result = await this.client.query(
+                `SELECT * FROM payment_tokens WHERE gateway_uid = $1 ORDER BY created_at DESC LIMIT 1`,
+                [gatewayUid]
+            )
+            if (!result.rows[0]) {
+                return null
+            }
+
+            return this.mapRow(result.rows[0])
+        } catch (error: any) {
+            throw new BaseAppError(
+                `Failed to fetch payment token: ${error.message ?? 'unknown error'}`,
+                ErrorCode.UNKNOWN_ERROR,
+                500
+            )
+        }
+    }
+
     async updateByToken(token: string, updates: PaymentTokenUpdateInput): Promise<PaymentToken | null> {
         const fields: string[] = []
         const values: any[] = []
