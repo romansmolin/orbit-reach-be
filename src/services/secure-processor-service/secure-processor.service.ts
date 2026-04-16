@@ -594,7 +594,14 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         const gatewayResponse = root.gateway_response ?? payload?.gateway_response ?? {}
         const payment = gatewayResponse.payment ?? root.payment ?? payload?.payment ?? {}
 
-        const token = root.token ?? payment.token ?? payload?.token ?? null
+        const additionalData = root.additional_data ?? payload?.additional_data ?? {}
+        const vendor = additionalData.vendor ?? {}
+        const token =
+            root.token ??
+            payment.token ??
+            payload?.token ??
+            vendor.token ??
+            null
         const trackingId =
             root.tracking_id ??
             order.tracking_id ??

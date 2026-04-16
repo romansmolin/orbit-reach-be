@@ -92,6 +92,26 @@ export class PaymentTokensRepository implements IPaymentTokensRepository {
                 ]
             )
 
+            try {
+                const verify = await this.client.query(
+                    'SELECT count(*)::int AS c FROM payment_tokens WHERE token = $1',
+                    [data.token]
+                )
+                // eslint-disable-next-line no-console
+                console.log('[payment-tokens.repository] POST-INSERT verify', {
+                    token: data.token,
+                    trackingId: data.trackingId,
+                    returningRowId: result.rows[0]?.id,
+                    countByToken: verify.rows[0]?.c,
+                })
+            } catch (verifyErr) {
+                // eslint-disable-next-line no-console
+                console.log('[payment-tokens.repository] POST-INSERT verify FAILED', {
+                    token: data.token,
+                    error: verifyErr instanceof Error ? verifyErr.message : verifyErr,
+                })
+            }
+
             return this.mapRow(result.rows[0])
         } catch (error: any) {
             throw new BaseAppError(
