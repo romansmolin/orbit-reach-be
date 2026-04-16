@@ -127,15 +127,45 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     }
 
     async handleReturn(params: { token: string; status?: string | null; uid?: string | null }): Promise<ReturnHandlingResult> {
+        this.logger.info('Secure Processor handleReturn start', {
+            operation: 'handleReturn',
+            token: params.token,
+            incomingStatus: params.status,
+            incomingUid: params.uid,
+        })
+
         const record = await this.requireTokenRecord(params.token)
         const normalizedStatus = this.normalizeStatus(params.status)
         const shouldReconcile = !normalizedStatus || normalizedStatus === 'pending'
+
+        this.logger.info('Secure Processor handleReturn record loaded', {
+            operation: 'handleReturn',
+            recordId: record.id,
+            recordStatus: record.status,
+            recordAmount: record.amount,
+            recordCurrency: record.currency,
+            recordItemType: record.itemType,
+            recordAddonCode: record.addonCode,
+            normalizedStatus,
+            shouldReconcile,
+        })
 
         let finalStatus: PaymentTokenStatus = normalizedStatus ?? 'pending'
         let gatewayUid = params.uid ?? record.gatewayUid ?? null
 
         if (shouldReconcile) {
             const checkout = await this.queryCheckoutStatus(record.token)
+
+            this.logger.info('Secure Processor handleReturn reconciled', {
+                operation: 'handleReturn',
+                token: record.token,
+                reconciledStatus: checkout.status,
+                reconciledUid: checkout.uid,
+                reconciledAmount: checkout.amount,
+                reconciledCurrency: checkout.currency,
+                reconciledTestMode: checkout.testMode,
+            })
+
             this.ensurePayloadConsistency(record, checkout)
             finalStatus = checkout.status ?? 'pending'
             gatewayUid = checkout.uid ?? gatewayUid
@@ -148,13 +178,29 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
             })
 
             if (finalStatus === 'successful' && record.status !== 'successful') {
+                this.logger.info('Secure Processor handleReturn triggering fulfillment', {
+                    operation: 'handleReturn',
+                    recordId: record.id,
+                    previousStatus: record.status,
+                })
                 await this.applyFulfillment(record)
             }
         } else {
+            this.logger.info('Secure Processor handleReturn applying incoming status without reconciliation', {
+                operation: 'handleReturn',
+                finalStatus,
+                gatewayUid,
+            })
             await this.applyStatusUpdate(record, finalStatus, {
                 gatewayUid,
             })
         }
+
+        this.logger.info('Secure Processor handleReturn finished', {
+            operation: 'handleReturn',
+            token: record.token,
+            finalStatus,
+        })
 
         return {
             status: finalStatus,
@@ -290,16 +336,41 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     }
 
     private async applyFulfillment(record: PaymentToken): Promise<void> {
+        this.logger.info('Secure Processor applyFulfillment start', {
+            operation: 'applyFulfillment',
+            recordId: record.id,
+            tenantId: record.tenantId,
+            itemType: record.itemType,
+            addonCode: record.addonCode,
+            amount: record.amount,
+            usageDeltas: record.usageDeltas,
+        })
+
         if (record.itemType === 'addon') {
             const deltas = record.usageDeltas ?? undefined
-            await this.userService.applyAddonPurchase(record.tenantId, {
-                addonCode: record.addonCode ?? 'UNKNOWN_ADDON',
-                usageDeltas: {
-                    sentPosts: deltas?.sentPosts ?? 0,
-                    scheduledPosts: deltas?.scheduledPosts ?? 0,
-                    aiRequests: deltas?.aiRequests ?? 0,
-                },
-            })
+            try {
+                await this.userService.applyAddonPurchase(record.tenantId, {
+                    addonCode: record.addonCode ?? 'UNKNOWN_ADDON',
+                    usageDeltas: {
+                        sentPosts: deltas?.sentPosts ?? 0,
+                        scheduledPosts: deltas?.scheduledPosts ?? 0,
+                        aiRequests: deltas?.aiRequests ?? 0,
+                    },
+                })
+                this.logger.info('Secure Processor applyFulfillment addon applied', {
+                    operation: 'applyFulfillment',
+                    recordId: record.id,
+                    addonCode: record.addonCode,
+                })
+            } catch (error) {
+                this.logger.error('Secure Processor applyFulfillment addon failed', {
+                    operation: 'applyFulfillment',
+                    recordId: record.id,
+                    addonCode: record.addonCode,
+                    error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : undefined,
+                })
+                throw error
+            }
 
             if (record.promoCodeId && this.promoCodesService) {
                 try {
@@ -326,8 +397,19 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         const record = await this.repository.findByToken(token)
 
         if (!record) {
+            this.logger.error('Secure Processor requireTokenRecord not found', {
+                operation: 'requireTokenRecord',
+                token,
+            })
             throw new BaseAppError('Payment token was not found', ErrorCode.NOT_FOUND, 404)
         }
+
+        this.logger.info('Secure Processor requireTokenRecord loaded', {
+            operation: 'requireTokenRecord',
+            token,
+            recordId: record.id,
+            recordStatus: record.status,
+        })
 
         return record
     }
@@ -410,6 +492,11 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
 
     private verifyBasicAuth(authorization?: string): void {
         if (!authorization?.startsWith('Basic ')) {
+            this.logger.warn('Secure Processor verifyBasicAuth missing header', {
+                operation: 'verifyBasicAuth',
+                hasHeader: Boolean(authorization),
+                headerPrefix: authorization?.slice(0, 10),
+            })
             throw new BaseAppError('Webhook authorization header is missing', ErrorCode.UNAUTHORIZED, 401)
         }
 
@@ -423,12 +510,24 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         const isMatch = lengthsMatch && crypto.timingSafeEqual(providedBuffer, expectedBuffer)
 
         if (!isMatch) {
+            this.logger.warn('Secure Processor verifyBasicAuth mismatch', {
+                operation: 'verifyBasicAuth',
+                providedLength: providedBuffer.length,
+                expectedLength: expectedBuffer.length,
+                lengthsMatch,
+            })
             throw new BaseAppError('Webhook authorization failed', ErrorCode.UNAUTHORIZED, 401)
         }
+
+        this.logger.info('Secure Processor verifyBasicAuth ok', { operation: 'verifyBasicAuth' })
     }
 
     private verifySignature(rawPayload: Buffer, signatureHeader?: string): void {
         if (!signatureHeader) {
+            this.logger.warn('Secure Processor verifySignature missing header', {
+                operation: 'verifySignature',
+                bodyLength: rawPayload.length,
+            })
             throw new BaseAppError('Content-Signature header is missing', ErrorCode.UNAUTHORIZED, 401)
         }
 
@@ -437,8 +536,15 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         const isValid = crypto.verify('RSA-SHA256', rawPayload, this.publicKey, Buffer.from(signature, 'base64'))
 
         if (!isValid) {
+            this.logger.warn('Secure Processor verifySignature invalid', {
+                operation: 'verifySignature',
+                bodyLength: rawPayload.length,
+                signaturePrefix: signature.slice(0, 20),
+            })
             throw new BaseAppError('Invalid webhook signature', ErrorCode.UNAUTHORIZED, 401)
         }
+
+        this.logger.info('Secure Processor verifySignature ok', { operation: 'verifySignature' })
     }
 
     private extractSignature(header: string): string {
@@ -531,9 +637,21 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     }
 
     private async queryCheckoutStatus(token: string): Promise<CheckoutDetails> {
+        this.logger.info('Secure Processor queryCheckoutStatus start', {
+            operation: 'queryCheckoutStatus',
+            token,
+            endpoint: `/ctp/api/checkouts/${token}`,
+        })
         try {
             const response = await this.apiClient.get<any>(`/ctp/api/checkouts/${token}`, {
                 headers: this.buildRequestHeaders(),
+            })
+
+            this.logger.info('Secure Processor queryCheckoutStatus response', {
+                operation: 'queryCheckoutStatus',
+                token,
+                responseKeys: response ? Object.keys(response) : [],
+                rawResponse: response,
             })
 
             const checkout = response?.checkout ?? response ?? {}
@@ -591,6 +709,14 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         }
 
         if (mismatches.length > 0) {
+            this.logger.error('Secure Processor ensurePayloadConsistency fatal mismatch', {
+                operation: 'ensurePayloadConsistency',
+                mismatches,
+                recordAmount: record.amount,
+                recordCurrency: record.currency,
+                checkoutAmount: checkout.amount,
+                checkoutCurrency: checkout.currency,
+            })
             const message = `Checkout data mismatch: ${mismatches.join(', ')}`
             this.repository.updateByToken(record.token, {
                 status: 'error',
