@@ -55,13 +55,26 @@ export class SecureProcessorController {
 
     async createToken(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
+            this.logger.info('Secure Processor createToken request', {
+                operation: 'createToken',
+                userId: req.user?.id,
+                body: req.body,
+                ip: req.ip,
+            })
+
             const parsed = createTokenSchema.safeParse(req.body)
 
             if (!parsed.success) {
+                this.logger.warn('Secure Processor createToken validation failed', {
+                    operation: 'createToken',
+                    issues: parsed.error.issues,
+                    body: req.body,
+                })
                 throw new BaseAppError('Invalid payment request payload', ErrorCode.BAD_REQUEST, 400)
             }
 
             if (!req.user?.id) {
+                this.logger.warn('Secure Processor createToken unauthorized', { operation: 'createToken' })
                 throw new BaseAppError('Unauthorized', ErrorCode.UNAUTHORIZED, 401)
             }
 
@@ -104,8 +117,20 @@ export class SecureProcessorController {
                 billingPeriod: planPayload.billingPeriod,
             })
 
+            this.logger.info('Secure Processor createToken success', {
+                operation: 'createToken',
+                userId: req.user.id,
+                token: (result as { token?: string })?.token,
+            })
             res.status(200).json(result)
         } catch (error) {
+            if (error instanceof Error) {
+                this.logger.error('Secure Processor createToken failed', {
+                    operation: 'createToken',
+                    userId: req.user?.id,
+                    error: { name: error.name, message: error.message, stack: error.stack },
+                })
+            }
             next(error)
         }
     }

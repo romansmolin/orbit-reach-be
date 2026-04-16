@@ -109,9 +109,24 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     }
 
     async createCheckoutToken(params: CreateCheckoutParams): Promise<CheckoutTokenResponse> {
+        this.logger.info('Secure Processor createCheckoutToken dispatch', {
+            operation: 'createCheckoutToken',
+            userId: params.userId,
+            itemType: params.itemType,
+            addonCode: (params as { addonCode?: string }).addonCode,
+            planCode: (params as { planCode?: string }).planCode,
+            billingPeriod: (params as { billingPeriod?: string }).billingPeriod,
+            amount: (params as { amount?: number }).amount,
+        })
+
         const userData = await this.userService.findUserById(params.userId)
 
         if (!userData?.user?.email) {
+            this.logger.warn('Secure Processor createCheckoutToken missing user email', {
+                operation: 'createCheckoutToken',
+                userId: params.userId,
+                foundUser: Boolean(userData?.user),
+            })
             throw new BaseAppError('User email is required for payment', ErrorCode.BAD_REQUEST, 400)
         }
 
@@ -789,6 +804,14 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
             },
         }
 
+        this.logger.info('Secure Processor createPlanCheckoutToken POST start', {
+            operation: 'createPlanCheckoutToken',
+            userId: params.userId,
+            planCode: params.planCode,
+            billingPeriod: params.billingPeriod,
+            trackingId,
+        })
+
         try {
             const response = await this.apiClient.post<any>('/ctp/api/checkouts', body, {
                 headers: this.buildRequestHeaders(),
@@ -796,24 +819,46 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
 
             const token = response?.checkout?.token ?? response?.token
 
+            this.logger.info('Secure Processor createPlanCheckoutToken SP response', {
+                operation: 'createPlanCheckoutToken',
+                userId: params.userId,
+                token,
+                checkoutUid: response?.checkout?.uid,
+            })
+
             if (!token) {
                 throw new BaseAppError('Secure Processor did not return a checkout token', ErrorCode.UNKNOWN_ERROR, 502)
             }
 
-            await this.repository.create({
-                token,
-                tenantId: params.userId,
-                planCode: params.planCode as UserPlans,
-                billingPeriod: params.billingPeriod,
-                amount: pricing.amount,
-                currency: pricing.currency,
-                description: pricing.description,
-                testMode: this.testMode,
-                status: 'created',
-                gatewayUid: response?.checkout?.uid ?? null,
-                trackingId,
-                itemType: 'plan',
-            })
+            try {
+                await this.repository.create({
+                    token,
+                    tenantId: params.userId,
+                    planCode: params.planCode as UserPlans,
+                    billingPeriod: params.billingPeriod,
+                    amount: pricing.amount,
+                    currency: pricing.currency,
+                    description: pricing.description,
+                    testMode: this.testMode,
+                    status: 'created',
+                    gatewayUid: response?.checkout?.uid ?? null,
+                    trackingId,
+                    itemType: 'plan',
+                })
+                this.logger.info('Secure Processor createPlanCheckoutToken DB record persisted', {
+                    operation: 'createPlanCheckoutToken',
+                    token,
+                    trackingId,
+                })
+            } catch (dbError) {
+                this.logger.error('Secure Processor createPlanCheckoutToken DB insert failed', {
+                    operation: 'createPlanCheckoutToken',
+                    token,
+                    trackingId,
+                    error: dbError instanceof Error ? { name: dbError.name, message: dbError.message, stack: dbError.stack } : undefined,
+                })
+                throw dbError
+            }
 
             return {
                 token,
@@ -830,7 +875,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
             this.logger.error('Secure Processor token creation failed', {
                 operation: 'createPlanCheckoutToken',
                 userId: params.userId,
-                error: error instanceof Error ? { name: error.name, message: error.message } : message,
+                error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : message,
             })
 
             if (error instanceof BaseAppError) {
@@ -906,6 +951,16 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
             },
         }
 
+        this.logger.info('Secure Processor createFlexibleTopUpCheckoutToken POST start', {
+            operation: 'createFlexibleTopUpCheckoutToken',
+            userId: params.userId,
+            trackingId,
+            finalAmount,
+            currency,
+            planName: plan.planName,
+            planType: plan.planType,
+        })
+
         try {
             const response = await this.apiClient.post<any>('/ctp/api/checkouts', body, {
                 headers: this.buildRequestHeaders(),
@@ -913,29 +968,54 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
 
             const token = response?.checkout?.token ?? response?.token
 
+            this.logger.info('Secure Processor createFlexibleTopUpCheckoutToken SP response', {
+                operation: 'createFlexibleTopUpCheckoutToken',
+                userId: params.userId,
+                token,
+                checkoutUid: response?.checkout?.uid,
+                trackingId,
+            })
+
             if (!token) {
                 throw new BaseAppError('Secure Processor did not return a checkout token', ErrorCode.UNKNOWN_ERROR, 502)
             }
 
-            await this.repository.create({
-                token,
-                tenantId: params.userId,
-                planCode: plan.planName,
-                billingPeriod: plan.planType,
-                amount: finalAmount,
-                currency,
-                description,
-                testMode: this.testMode,
-                status: 'created',
-                gatewayUid: response?.checkout?.uid ?? null,
-                trackingId,
-                itemType: 'addon',
-                addonCode: params.addonCode,
-                usageDeltas,
-                promoCodeId,
-                originalAmount: discountAmount > 0 ? originalAmount : null,
-                discountAmount,
-            })
+            try {
+                await this.repository.create({
+                    token,
+                    tenantId: params.userId,
+                    planCode: plan.planName,
+                    billingPeriod: plan.planType,
+                    amount: finalAmount,
+                    currency,
+                    description,
+                    testMode: this.testMode,
+                    status: 'created',
+                    gatewayUid: response?.checkout?.uid ?? null,
+                    trackingId,
+                    itemType: 'addon',
+                    addonCode: params.addonCode,
+                    usageDeltas,
+                    promoCodeId,
+                    originalAmount: discountAmount > 0 ? originalAmount : null,
+                    discountAmount,
+                })
+                this.logger.info('Secure Processor createFlexibleTopUpCheckoutToken DB record persisted', {
+                    operation: 'createFlexibleTopUpCheckoutToken',
+                    token,
+                    trackingId,
+                })
+            } catch (dbError) {
+                this.logger.error('Secure Processor createFlexibleTopUpCheckoutToken DB insert failed', {
+                    operation: 'createFlexibleTopUpCheckoutToken',
+                    token,
+                    trackingId,
+                    planName: plan.planName,
+                    planType: plan.planType,
+                    error: dbError instanceof Error ? { name: dbError.name, message: dbError.message, stack: dbError.stack } : undefined,
+                })
+                throw dbError
+            }
 
             return {
                 token,
@@ -954,7 +1034,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                 userId: params.userId,
                 amountCents,
                 currency,
-                error: error instanceof Error ? { name: error.name, message: error.message } : message,
+                error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : message,
             })
 
             if (error instanceof BaseAppError) {
@@ -1054,6 +1134,16 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
             },
         }
 
+        this.logger.info('Secure Processor createAddonCheckoutToken POST start', {
+            operation: 'createAddonCheckoutToken',
+            userId: params.userId,
+            addonCode: params.addonCode,
+            finalAmount,
+            planName: plan.planName,
+            planType: plan.planType,
+            trackingId,
+        })
+
         try {
             const response = await this.apiClient.post<any>('/ctp/api/checkouts', body, {
                 headers: this.buildRequestHeaders(),
@@ -1061,29 +1151,53 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
 
             const token = response?.checkout?.token ?? response?.token
 
+            this.logger.info('Secure Processor createAddonCheckoutToken SP response', {
+                operation: 'createAddonCheckoutToken',
+                userId: params.userId,
+                token,
+                checkoutUid: response?.checkout?.uid,
+            })
+
             if (!token) {
                 throw new BaseAppError('Secure Processor did not return a checkout token', ErrorCode.UNKNOWN_ERROR, 502)
             }
 
-            await this.repository.create({
-                token,
-                tenantId: params.userId,
-                planCode: plan.planName,
-                billingPeriod: plan.planType,
-                amount: finalAmount,
-                currency: pricing.currency,
-                description: pricing.description,
-                testMode: this.testMode,
-                status: 'created',
-                gatewayUid: response?.checkout?.uid ?? null,
-                trackingId,
-                itemType: 'addon',
-                addonCode: params.addonCode,
-                usageDeltas: pricing.usageDeltas,
-                promoCodeId,
-                originalAmount: discountAmount > 0 ? originalAmount : null,
-                discountAmount,
-            })
+            try {
+                await this.repository.create({
+                    token,
+                    tenantId: params.userId,
+                    planCode: plan.planName,
+                    billingPeriod: plan.planType,
+                    amount: finalAmount,
+                    currency: pricing.currency,
+                    description: pricing.description,
+                    testMode: this.testMode,
+                    status: 'created',
+                    gatewayUid: response?.checkout?.uid ?? null,
+                    trackingId,
+                    itemType: 'addon',
+                    addonCode: params.addonCode,
+                    usageDeltas: pricing.usageDeltas,
+                    promoCodeId,
+                    originalAmount: discountAmount > 0 ? originalAmount : null,
+                    discountAmount,
+                })
+                this.logger.info('Secure Processor createAddonCheckoutToken DB record persisted', {
+                    operation: 'createAddonCheckoutToken',
+                    token,
+                    trackingId,
+                })
+            } catch (dbError) {
+                this.logger.error('Secure Processor createAddonCheckoutToken DB insert failed', {
+                    operation: 'createAddonCheckoutToken',
+                    token,
+                    trackingId,
+                    planName: plan.planName,
+                    planType: plan.planType,
+                    error: dbError instanceof Error ? { name: dbError.name, message: dbError.message, stack: dbError.stack } : undefined,
+                })
+                throw dbError
+            }
 
             return {
                 token,
@@ -1101,7 +1215,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                 operation: 'createAddonCheckoutToken',
                 userId: params.userId,
                 addonCode: params.addonCode,
-                error: error instanceof Error ? { name: error.name, message: error.message } : message,
+                error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : message,
             })
 
             if (error instanceof BaseAppError) {
