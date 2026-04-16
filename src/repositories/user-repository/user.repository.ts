@@ -347,18 +347,14 @@ export class UserRepository implements IUserRepository {
     }
 
     async findUserPlanByUserId(userId: string): Promise<UserPlan> {
-        const client = await this.client.connect()
+        const query = `
+            SELECT *
+            FROM user_plans
+            WHERE tenant_id = $1
+        `
 
         try {
-            await client.query('BEGIN')
-
-            const query = `
-                SELECT *
-                FROM user_plans
-                WHERE tenant_id = $1
-            `
-
-            const result = await client.query(query, [userId])
+            const result = await this.client.query(query, [userId])
 
             if (result.rows.length === 0)
                 throw new BaseAppError(
@@ -369,11 +365,8 @@ export class UserRepository implements IUserRepository {
 
             return this.mapRowToUserPlan(result.rows[0])
         } catch (error: unknown) {
-            await client.query('ROLLBACK')
             if (error instanceof BaseAppError) throw error
             throw new BaseAppError(`Failed to retrieve plan for user with id ${userId}`, ErrorCode.BAD_REQUEST, 500)
-        } finally {
-            client.release()
         }
     }
 

@@ -1038,12 +1038,8 @@ export class PostsRepository implements IPostsRepository {
     }
 
     async getPostsFailedCount(userId: string): Promise<number> {
-        const client = await this.client.connect()
-
         try {
-            await client.query('BEGIN')
-
-            const query = `      
+            const query = `
                 SELECT COUNT(*) AS failed_rows
                 FROM post_targets pt
                 JOIN posts p ON p.id = pt.post_id
@@ -1051,13 +1047,9 @@ export class PostsRepository implements IPostsRepository {
                 AND pt.status = 'FAILED' LIMIT 100
             `
 
-            const res = await client.query(query, [userId])
-            const failedCount = Number(res.rows[0].failed_rows)
-
-            return failedCount
+            const res = await this.client.query(query, [userId])
+            return Number(res.rows[0].failed_rows)
         } catch (error: unknown) {
-            await client.query('ROLLBACK')
-
             this.logger.error('Failed to get failed posts count', {
                 operation: 'getPostsFailedCount',
                 userId,
@@ -1072,8 +1064,6 @@ export class PostsRepository implements IPostsRepository {
             })
 
             throw new BaseAppError('Failed to get failed posts count', ErrorCode.UNKNOWN_ERROR, 500)
-        } finally {
-            client.release()
         }
     }
 
@@ -1169,38 +1159,28 @@ export class PostsRepository implements IPostsRepository {
     }
 
     async getFailedPostTargets(userId: string): Promise<PostTargetEntity[]> {
-        const client = await this.client.connect()
-        try {
-            await client.query('BEGIN')
+        const query = `
+            SELECT DISTINCT pt.*, p.tenant_id
+            FROM post_targets pt
+            JOIN posts p ON pt.post_id = p.id
+            WHERE p.tenant_id = $1 AND pt.status = 'FAILED'
+        `
 
-            const query = `  
-                        SELECT DISTINCT pt.*, p.tenant_id
-                        FROM post_targets pt
-                        JOIN posts p ON pt.post_id = p.id
-                        WHERE p.tenant_id = $1 AND pt.status = 'FAILED'
-            `
+        const result = await this.client.query(query, [userId])
 
-            const result = await client.query(query, [userId])
-
-            return result.rows.map(
-                (row) =>
-                    new PostTargetEntity(
-                        row.post_id,
-                        row.social_account_id,
-                        row.platform,
-                        row.status,
-                        row.error_message,
-                        row.text,
-                        row.title,
-                        row.pinterest_board_id,
-                        row.tenant_id
-                    )
-            )
-        } catch (error: unknown) {
-            await client.query('ROLLBACK')
-            throw error
-        } finally {
-            client.release()
-        }
+        return result.rows.map(
+            (row) =>
+                new PostTargetEntity(
+                    row.post_id,
+                    row.social_account_id,
+                    row.platform,
+                    row.status,
+                    row.error_message,
+                    row.text,
+                    row.title,
+                    row.pinterest_board_id,
+                    row.tenant_id
+                )
+        )
     }
 }
