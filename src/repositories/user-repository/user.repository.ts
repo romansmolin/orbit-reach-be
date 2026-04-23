@@ -817,32 +817,28 @@ export class UserRepository implements IUserRepository {
             const applyDelta = async (usageType: 'sent' | 'scheduled' | 'ai', delta: number, baseLimit: number) => {
                 if (delta <= 0) return
 
-                const existing = await client.query<{
-                    id: string
-                    used_count: number
-                    limit_count: number
-                }>(
+                const existing = await client.query<{ id: string }>(
                     `
-                    SELECT id, used_count, limit_count
+                    SELECT id
                     FROM user_plan_usage
                     WHERE tenant_id = $1 AND usage_type = $2 AND period_start = $3 AND period_end = $4
-                    ORDER BY created_at DESC
-                    LIMIT 1
                     `,
                     [params.userId, usageType, params.periodStart, params.periodEnd]
                 )
 
                 if (existing.rows.length > 0) {
-                    const row = existing.rows[0]
                     await client.query(
                         `
                         UPDATE user_plan_usage
                         SET
-                            limit_count = GREATEST($1, $2, limit_count + $3),
+                            limit_count = GREATEST($1, limit_count + $2),
                             updated_at = NOW()
-                        WHERE id = $4
+                        WHERE tenant_id = $3
+                          AND usage_type = $4
+                          AND period_start = $5
+                          AND period_end = $6
                         `,
-                        [row.used_count, baseLimit + delta, delta, row.id]
+                        [baseLimit + delta, delta, params.userId, usageType, params.periodStart, params.periodEnd]
                     )
                 } else {
                     if (!planId) {
@@ -913,15 +909,15 @@ export class UserRepository implements IUserRepository {
                     SELECT unnest(ARRAY['sent', 'scheduled', 'accounts', 'ai'])::text AS usage_type
                 ),
                 period_usage AS (
-                    SELECT
+                    SELECT DISTINCT ON (usage_type)
                         usage_type,
-                        SUM(used_count)::int AS used_count,
-                        MAX(limit_count)::int AS limit_count
+                        used_count,
+                        limit_count
                     FROM user_plan_usage
                     WHERE tenant_id = $1
                       AND period_start = $2
                       AND period_end = $3
-                    GROUP BY usage_type
+                    ORDER BY usage_type, updated_at DESC, created_at DESC
                 ),
                 usage_data AS (
                     SELECT
