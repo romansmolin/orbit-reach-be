@@ -1,29 +1,63 @@
 import assert from 'assert'
 import { UserRepository } from '@/repositories/user-repository'
 
+type UsageType = 'sent' | 'scheduled' | 'accounts' | 'ai'
+
 class FakeClient {
-    public usage: Record<string, number> = { sent: 0, scheduled: 0, accounts: 0, ai: 0 }
-    public limits: Record<string, number> = { sent: 300, scheduled: 200, accounts: 10, ai: 0 }
+    public usage: Record<UsageType, number> = { sent: 0, scheduled: 0, accounts: 0, ai: 0 }
+    public limits: Record<UsageType, number> = { sent: 300, scheduled: 200, accounts: 10, ai: 0 }
+    public existingRow = true
+    public hasPlan = true
 
     async query(sql: string, params?: any[]) {
         const text = sql.trim().toLowerCase()
+
         if (text.startsWith('begin') || text.startsWith('commit') || text.startsWith('rollback')) {
             return { rows: [] }
         }
 
-        if (text.includes('with user_plan as')) {
-            const usageType = params?.[1] as 'sent' | 'scheduled' | 'accounts' | 'ai'
-            const delta = params?.[4] ?? 0
+        if (text.startsWith('select id, used_count, limit_count') && text.includes('from user_plan_usage')) {
+            const usageType = params?.[1] as UsageType
+            if (!this.existingRow) return { rows: [] }
+            return {
+                rows: [
+                    {
+                        id: 'row-1',
+                        used_count: this.usage[usageType] ?? 0,
+                        limit_count: this.limits[usageType] ?? 0,
+                    },
+                ],
+            }
+        }
+
+        if (text.startsWith('update user_plan_usage')) {
+            const delta = params?.[0] ?? 0
+            const usageType = params?.[2] as UsageType
             const limit = this.limits[usageType] ?? 0
             const next = Math.max(0, Math.min((this.usage[usageType] ?? 0) + delta, limit))
             this.usage[usageType] = next
-            return { rows: [{ new_usage_count: next, limit_count: limit }] }
+            return { rows: [{ used_count: next, limit_count: limit }] }
         }
 
-        // ensurePlan/update resets ignored in this test
-        if (text.startsWith('select') || text.startsWith('update') || text.startsWith('insert')) {
-            return { rows: [] }
+        if (text.includes('from tenants') && text.includes('default_limit')) {
+            const usageType = params?.[1] as UsageType
+            return { rows: [{ default_limit: this.limits[usageType] ?? 0 }] }
         }
+
+        if (text.startsWith('select id from user_plans')) {
+            return { rows: this.hasPlan ? [{ id: 'plan-1' }] : [] }
+        }
+
+        if (text.startsWith('insert into user_plan_usage')) {
+            const usageType = params?.[3] as UsageType
+            const used = params?.[6] ?? 0
+            const limit = params?.[7] ?? 0
+            this.usage[usageType] = used
+            this.limits[usageType] = limit
+            return { rows: [{ used_count: used, limit_count: limit }] }
+        }
+
+        if (text.startsWith('select')) return { rows: [] }
 
         throw new Error('Unexpected query: ' + sql)
     }
@@ -40,7 +74,7 @@ class FakeClient {
 function createRepo(fake: FakeClient) {
     const repo: any = Object.create(UserRepository.prototype)
     repo.client = fake
-    repo.logger = { warn() {}, error() {} }
+    repo.logger = { info() {}, warn() {}, error() {}, debug() {} }
     return repo as UserRepository
 }
 
@@ -73,7 +107,6 @@ async function testPeriodCoverageUsesProvidedDates() {
     const start = new Date('2025-02-01')
     const end = new Date('2025-02-28')
 
-    // ensure usage increments even when periodStart is future (uses $3/$4 not NOW)
     const result = await repo.updateUserPlanUsage('user1', 'scheduled', 20, start, end)
     assert.strictEqual(result.newUsageCount, 20)
     assert.strictEqual(result.limitCount, 200)

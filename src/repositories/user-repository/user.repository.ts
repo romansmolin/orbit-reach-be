@@ -583,66 +583,78 @@ export class UserRepository implements IUserRepository {
         try {
             await client.query('BEGIN')
 
-            const query = `
-                WITH tenant_defaults AS (
-                    SELECT
-                        t.id AS tenant_id,
-                        CASE
-                            WHEN $2 = 'sent' THEN t.default_sent_posts_limit
-                            WHEN $2 = 'scheduled' THEN t.default_scheduled_posts_limit
-                            WHEN $2 = 'accounts' THEN COALESCE(t.default_account_limit::int, 999999)
-                            WHEN $2 = 'ai' THEN t.default_ai_requests_limit
-                        END AS default_limit
-                    FROM tenants t
-                    WHERE t.id = $1
-                ),
-                plan_ref AS (
-                    SELECT id AS plan_id
-                    FROM user_plans
-                    WHERE tenant_id = $1
-                    ORDER BY start_date DESC NULLS LAST
-                    LIMIT 1
-                ),
-                existing_usage AS (
-                    SELECT id, used_count, limit_count
-                    FROM user_plan_usage
-                    WHERE tenant_id = $1
-                      AND usage_type = $2
-                      AND period_start = $3
-                      AND period_end = $4
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                ),
-                updated AS (
-                    UPDATE user_plan_usage upu
-                    SET
-                        used_count = GREATEST(0, LEAST(upu.used_count + $5, upu.limit_count)),
-                        updated_at = NOW()
-                    FROM existing_usage eu
-                    WHERE upu.id = eu.id
-                    RETURNING upu.used_count, upu.limit_count
-                ),
-                inserted AS (
-                    INSERT INTO user_plan_usage (
-                        id, tenant_id, plan_id, usage_type, period_start, period_end, used_count, limit_count
-                    )
-                    SELECT
-                        uuid_generate_v4(), $1, pr.plan_id, $2, $3, $4,
-                        GREATEST(0, LEAST($5, td.default_limit)),
-                        td.default_limit
-                    FROM tenant_defaults td
-                    CROSS JOIN plan_ref pr
-                    WHERE NOT EXISTS (SELECT 1 FROM existing_usage)
-                      AND td.default_limit IS NOT NULL
-                      AND td.default_limit > 0
-                    RETURNING used_count, limit_count
-                )
-                SELECT used_count AS new_usage_count, limit_count, true AS success FROM updated
-                UNION ALL
-                SELECT used_count AS new_usage_count, limit_count, true AS success FROM inserted
-            `
+            const existing = await client.query<{ id: string; used_count: number; limit_count: number }>(
+                `SELECT id, used_count, limit_count
+                 FROM user_plan_usage
+                 WHERE tenant_id = $1 AND usage_type = $2 AND period_start = $3 AND period_end = $4
+                 ORDER BY updated_at DESC, created_at DESC
+                 LIMIT 1`,
+                [userId, usageType, periodStart, periodEnd]
+            )
 
-            const result = await client.query(query, [userId, usageType, periodStart, periodEnd, additionalCount])
+            let result: { rows: Array<{ new_usage_count: number; limit_count: number; success: boolean }> }
+
+            if (existing.rows.length > 0) {
+                const row = existing.rows[0]
+                const upd = await client.query(
+                    `UPDATE user_plan_usage
+                     SET used_count = GREATEST(0, LEAST(used_count + $1, limit_count)),
+                         updated_at = NOW()
+                     WHERE tenant_id = $2 AND usage_type = $3 AND period_start = $4 AND period_end = $5
+                     RETURNING used_count, limit_count`,
+                    [additionalCount, userId, usageType, periodStart, periodEnd]
+                )
+                result = {
+                    rows: upd.rows.map((r: any) => ({
+                        new_usage_count: r.used_count,
+                        limit_count: r.limit_count,
+                        success: true,
+                    })),
+                }
+            } else {
+                const tenantRes = await client.query<{ default_limit: number }>(
+                    `SELECT CASE
+                        WHEN $2 = 'sent' THEN default_sent_posts_limit
+                        WHEN $2 = 'scheduled' THEN default_scheduled_posts_limit
+                        WHEN $2 = 'accounts' THEN COALESCE(default_account_limit::int, 999999)
+                        WHEN $2 = 'ai' THEN default_ai_requests_limit
+                     END AS default_limit
+                     FROM tenants
+                     WHERE id = $1`,
+                    [userId, usageType]
+                )
+                const defaultLimit = tenantRes.rows[0]?.default_limit ?? 0
+                const planRes = await client.query<{ id: string }>(
+                    `SELECT id FROM user_plans
+                     WHERE tenant_id = $1
+                     ORDER BY start_date DESC NULLS LAST
+                     LIMIT 1`,
+                    [userId]
+                )
+                const planId = planRes.rows[0]?.id ?? null
+
+                if (!planId || defaultLimit <= 0) {
+                    result = { rows: [] }
+                } else {
+                    const newUsed = Math.max(0, Math.min(additionalCount, defaultLimit))
+                    const ins = await client.query(
+                        `INSERT INTO user_plan_usage (
+                            id, tenant_id, plan_id, usage_type,
+                            period_start, period_end, used_count, limit_count
+                         )
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                         RETURNING used_count, limit_count`,
+                        [uuidv4(), userId, planId, usageType, periodStart, periodEnd, newUsed, defaultLimit]
+                    )
+                    result = {
+                        rows: ins.rows.map((r: any) => ({
+                            new_usage_count: r.used_count,
+                            limit_count: r.limit_count,
+                            success: true,
+                        })),
+                    }
+                }
+            }
 
             await client.query('COMMIT')
 
@@ -776,6 +788,13 @@ export class UserRepository implements IUserRepository {
     }): Promise<void> {
         const client = await this.client.connect()
 
+        this.logger.info('incrementUsageLimits ENTER', {
+            userId: params.userId,
+            periodStart: params.periodStart.toISOString(),
+            periodEnd: params.periodEnd.toISOString(),
+            deltas: params.deltas,
+        })
+
         try {
             await client.query('BEGIN')
 
@@ -797,6 +816,10 @@ export class UserRepository implements IUserRepository {
             }
 
             const tenant = tenantRes.rows[0]
+            this.logger.info('incrementUsageLimits tenant defaults', {
+                userId: params.userId,
+                defaults: tenant,
+            })
             const baseLimits = {
                 sent: tenant.default_sent_posts_limit,
                 scheduled: tenant.default_scheduled_posts_limit,
@@ -817,17 +840,31 @@ export class UserRepository implements IUserRepository {
             const applyDelta = async (usageType: 'sent' | 'scheduled' | 'ai', delta: number, baseLimit: number) => {
                 if (delta <= 0) return
 
-                const existing = await client.query<{ id: string }>(
+                const existing = await client.query<{
+                    id: string
+                    plan_id: string
+                    limit_count: number
+                    used_count: number
+                }>(
                     `
-                    SELECT id
+                    SELECT id, plan_id, limit_count, used_count
                     FROM user_plan_usage
                     WHERE tenant_id = $1 AND usage_type = $2 AND period_start = $3 AND period_end = $4
                     `,
                     [params.userId, usageType, params.periodStart, params.periodEnd]
                 )
 
+                this.logger.info('incrementUsageLimits existing rows', {
+                    userId: params.userId,
+                    usageType,
+                    count: existing.rowCount,
+                    rows: existing.rows,
+                    baseLimit,
+                    delta,
+                })
+
                 if (existing.rows.length > 0) {
-                    await client.query(
+                    const upd = await client.query(
                         `
                         UPDATE user_plan_usage
                         SET
@@ -837,9 +874,16 @@ export class UserRepository implements IUserRepository {
                           AND usage_type = $4
                           AND period_start = $5
                           AND period_end = $6
+                        RETURNING id, limit_count
                         `,
                         [baseLimit + delta, delta, params.userId, usageType, params.periodStart, params.periodEnd]
                     )
+                    this.logger.info('incrementUsageLimits UPDATE result', {
+                        userId: params.userId,
+                        usageType,
+                        affected: upd.rowCount,
+                        rows: upd.rows,
+                    })
                 } else {
                     if (!planId) {
                         throw new BaseAppError(
@@ -848,7 +892,7 @@ export class UserRepository implements IUserRepository {
                             400
                         )
                     }
-                    await client.query(
+                    const ins = await client.query(
                         `
                         INSERT INTO user_plan_usage (
                             id,
@@ -861,9 +905,15 @@ export class UserRepository implements IUserRepository {
                             limit_count
                         )
                         VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
+                        RETURNING id, limit_count
                         `,
                         [uuidv4(), params.userId, planId, usageType, params.periodStart, params.periodEnd, baseLimit + delta]
                     )
+                    this.logger.info('incrementUsageLimits INSERT result', {
+                        userId: params.userId,
+                        usageType,
+                        rows: ins.rows,
+                    })
                 }
             }
 
@@ -872,8 +922,38 @@ export class UserRepository implements IUserRepository {
             await applyDelta('ai', params.deltas.ai ?? 0, baseLimits.ai)
 
             await client.query('COMMIT')
+
+            const verify = await client.query(
+                `
+                SELECT usage_type, plan_id, used_count, limit_count, period_start, period_end
+                FROM user_plan_usage
+                WHERE tenant_id = $1 AND period_start = $2 AND period_end = $3
+                ORDER BY usage_type, updated_at DESC
+                `,
+                [params.userId, params.periodStart, params.periodEnd]
+            )
+            this.logger.info('incrementUsageLimits POST-COMMIT verify', {
+                userId: params.userId,
+                periodStart: params.periodStart.toISOString(),
+                periodEnd: params.periodEnd.toISOString(),
+                rowCount: verify.rowCount,
+                rows: verify.rows.map(r => ({
+                    usage_type: r.usage_type,
+                    plan_id: r.plan_id,
+                    used_count: r.used_count,
+                    limit_count: r.limit_count,
+                    period_start: r.period_start instanceof Date ? r.period_start.toISOString() : r.period_start,
+                    period_end: r.period_end instanceof Date ? r.period_end.toISOString() : r.period_end,
+                })),
+            })
         } catch (error) {
             await client.query('ROLLBACK')
+            this.logger.error('incrementUsageLimits FAILED', {
+                userId: params.userId,
+                error: error instanceof Error
+                    ? { name: error.name, message: error.message, stack: error.stack }
+                    : { message: String(error) },
+            })
             if (error instanceof BaseAppError) throw error
             throw new BaseAppError('Failed to increment usage limits', ErrorCode.UNKNOWN_ERROR, 500)
         } finally {
@@ -894,6 +974,32 @@ export class UserRepository implements IUserRepository {
         const client = await this.client.connect()
 
         try {
+            this.logger.info('getCurrentUsageQuota ENTER', {
+                userId,
+                periodStart: periodStart.toISOString(),
+                periodEnd: periodEnd.toISOString(),
+            })
+
+            const diag = await client.query(
+                `SELECT id, plan_id, usage_type, used_count, limit_count,
+                        period_start, period_end
+                 FROM user_plan_usage
+                 WHERE tenant_id = $1
+                 ORDER BY period_start DESC, usage_type`,
+                [userId]
+            )
+            this.logger.info('getCurrentUsageQuota all rows for tenant', {
+                userId,
+                rows: diag.rows.map(r => ({
+                    usage_type: r.usage_type,
+                    plan_id: r.plan_id,
+                    used_count: r.used_count,
+                    limit_count: r.limit_count,
+                    period_start: r.period_start instanceof Date ? r.period_start.toISOString() : r.period_start,
+                    period_end: r.period_end instanceof Date ? r.period_end.toISOString() : r.period_end,
+                })),
+            })
+
             const query = `
                 WITH tenant_limits AS (
                     SELECT
@@ -906,7 +1012,8 @@ export class UserRepository implements IUserRepository {
                     WHERE t.id = $1
                 ),
                 usage_types AS (
-                    SELECT unnest(ARRAY['sent', 'scheduled', 'accounts', 'ai'])::text AS usage_type
+                    SELECT v AS usage_type
+                    FROM (VALUES ('sent'), ('scheduled'), ('accounts'), ('ai')) AS t(v)
                 ),
                 period_usage AS (
                     SELECT DISTINCT ON (usage_type)
@@ -933,7 +1040,7 @@ export class UserRepository implements IUserRepository {
                             END
                         ) AS limit_count
                     FROM tenant_limits tl
-                    CROSS JOIN usage_types ut
+                    INNER JOIN usage_types ut ON TRUE
                     LEFT JOIN period_usage pu ON pu.usage_type = ut.usage_type
                 )
                 SELECT 
