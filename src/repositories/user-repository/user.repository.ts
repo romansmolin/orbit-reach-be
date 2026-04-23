@@ -584,60 +584,62 @@ export class UserRepository implements IUserRepository {
             await client.query('BEGIN')
 
             const query = `
-                WITH user_plan AS (
-                    SELECT 
-                        up.id as plan_id,
-                        CASE 
-                            WHEN $2 = 'sent' THEN up.sent_posts_limit
-                            WHEN $2 = 'scheduled' THEN up.scheduled_posts_limit
-                            WHEN $2 = 'accounts' THEN COALESCE(up.accounts_limit::int, 0)
-                            WHEN $2 = 'ai' THEN COALESCE(up.ai_requests_limit::int, 0)
-                        END as limit_count
-                    FROM user_plans up
-                    WHERE up.tenant_id = $1 
-                    AND up.is_active = true
-                    AND (up.end_date IS NULL OR up.end_date >= $3)
-                    AND up.start_date <= $4
-                    ORDER BY up.start_date DESC
+                WITH tenant_defaults AS (
+                    SELECT
+                        t.id AS tenant_id,
+                        CASE
+                            WHEN $2 = 'sent' THEN t.default_sent_posts_limit
+                            WHEN $2 = 'scheduled' THEN t.default_scheduled_posts_limit
+                            WHEN $2 = 'accounts' THEN COALESCE(t.default_account_limit::int, 999999)
+                            WHEN $2 = 'ai' THEN t.default_ai_requests_limit
+                        END AS default_limit
+                    FROM tenants t
+                    WHERE t.id = $1
+                ),
+                plan_ref AS (
+                    SELECT id AS plan_id
+                    FROM user_plans
+                    WHERE tenant_id = $1
+                    ORDER BY start_date DESC NULLS LAST
                     LIMIT 1
                 ),
-                upsert_usage AS (
-                    INSERT INTO user_plan_usage (
-                        id,
-                        tenant_id,
-                        plan_id,
-                        usage_type,
-                        period_start,
-                        period_end,
-                        used_count,
-                        limit_count
-                    )
-                    SELECT 
-                        uuid_generate_v4(),
-                        $1,
-                        up.plan_id,
-                        $2,
-                        $3,
-                        $4,
-                        GREATEST(0, LEAST($5, up.limit_count)),
-                        up.limit_count
-                    FROM user_plan up
-                    WHERE up.limit_count IS NOT NULL AND up.limit_count > 0
-                    ON CONFLICT (tenant_id, plan_id, usage_type, period_start, period_end)
-                    DO UPDATE SET
-                        used_count = GREATEST(
-                            0, 
-                            LEAST(user_plan_usage.used_count + EXCLUDED.used_count, EXCLUDED.limit_count)
-                        ),
-                        limit_count = EXCLUDED.limit_count,
+                existing_usage AS (
+                    SELECT id, used_count, limit_count
+                    FROM user_plan_usage
+                    WHERE tenant_id = $1
+                      AND usage_type = $2
+                      AND period_start = $3
+                      AND period_end = $4
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ),
+                updated AS (
+                    UPDATE user_plan_usage upu
+                    SET
+                        used_count = GREATEST(0, LEAST(upu.used_count + $5, upu.limit_count)),
                         updated_at = NOW()
-                    RETURNING user_plan_usage.used_count, user_plan_usage.limit_count
+                    FROM existing_usage eu
+                    WHERE upu.id = eu.id
+                    RETURNING upu.used_count, upu.limit_count
+                ),
+                inserted AS (
+                    INSERT INTO user_plan_usage (
+                        id, tenant_id, plan_id, usage_type, period_start, period_end, used_count, limit_count
+                    )
+                    SELECT
+                        uuid_generate_v4(), $1, pr.plan_id, $2, $3, $4,
+                        GREATEST(0, LEAST($5, td.default_limit)),
+                        td.default_limit
+                    FROM tenant_defaults td
+                    CROSS JOIN plan_ref pr
+                    WHERE NOT EXISTS (SELECT 1 FROM existing_usage)
+                      AND td.default_limit IS NOT NULL
+                      AND td.default_limit > 0
+                    RETURNING used_count, limit_count
                 )
-                SELECT 
-                    uu.used_count as new_usage_count,
-                    uu.limit_count as limit_count,
-                    true as success
-                FROM upsert_usage uu
+                SELECT used_count AS new_usage_count, limit_count, true AS success FROM updated
+                UNION ALL
+                SELECT used_count AS new_usage_count, limit_count, true AS success FROM inserted
             `
 
             const result = await client.query(query, [userId, usageType, periodStart, periodEnd, additionalCount])
