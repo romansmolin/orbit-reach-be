@@ -672,12 +672,7 @@ export class UserService implements IUserService {
             }
 
             try {
-                const { startDate, endDate } = plan
-                    ? {
-                          startDate: plan.startDate,
-                          endDate: plan.endDate ?? this.getCurrentBillingPeriod().endDate,
-                      }
-                    : this.getCurrentBillingPeriod()
+                const { startDate, endDate } = this.getCurrentBillingPeriod()
 
                 quotaUsage = await this.repository.getCurrentUsageQuota(id, startDate, endDate)
             } catch (error) {
