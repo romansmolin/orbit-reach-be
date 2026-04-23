@@ -71,11 +71,9 @@ export interface IUserRepository {
     }): Promise<void>
     incrementUsageLimits(params: {
         userId: string
-        planId: string
         periodStart: Date
         periodEnd: Date
         deltas: { sent?: number; scheduled?: number; ai?: number }
-        baseLimits: { sent: number; scheduled: number; ai: number }
     }): Promise<void>
 
     getCurrentUsageQuota(

@@ -768,16 +768,49 @@ export class UserRepository implements IUserRepository {
 
     async incrementUsageLimits(params: {
         userId: string
-        planId: string
         periodStart: Date
         periodEnd: Date
         deltas: { sent?: number; scheduled?: number; ai?: number }
-        baseLimits: { sent: number; scheduled: number; ai: number }
     }): Promise<void> {
         const client = await this.client.connect()
 
         try {
             await client.query('BEGIN')
+
+            const tenantRes = await client.query<{
+                default_sent_posts_limit: number
+                default_scheduled_posts_limit: number
+                default_ai_requests_limit: number
+            }>(
+                `
+                SELECT default_sent_posts_limit, default_scheduled_posts_limit, default_ai_requests_limit
+                FROM tenants
+                WHERE id = $1
+                `,
+                [params.userId]
+            )
+
+            if (tenantRes.rows.length === 0) {
+                throw new BaseAppError('Tenant not found', ErrorCode.BAD_REQUEST, 400)
+            }
+
+            const tenant = tenantRes.rows[0]
+            const baseLimits = {
+                sent: tenant.default_sent_posts_limit,
+                scheduled: tenant.default_scheduled_posts_limit,
+                ai: tenant.default_ai_requests_limit,
+            }
+
+            const planRes = await client.query<{ id: string }>(
+                `
+                SELECT id FROM user_plans
+                WHERE tenant_id = $1
+                ORDER BY start_date DESC NULLS LAST
+                LIMIT 1
+                `,
+                [params.userId]
+            )
+            const planId = planRes.rows[0]?.id ?? null
 
             const applyDelta = async (usageType: 'sent' | 'scheduled' | 'ai', delta: number, baseLimit: number) => {
                 if (delta <= 0) return
@@ -790,10 +823,11 @@ export class UserRepository implements IUserRepository {
                     `
                     SELECT id, used_count, limit_count
                     FROM user_plan_usage
-                    WHERE tenant_id = $1 AND plan_id = $2 AND usage_type = $3 AND period_start = $4 AND period_end = $5
+                    WHERE tenant_id = $1 AND usage_type = $2 AND period_start = $3 AND period_end = $4
+                    ORDER BY created_at DESC
                     LIMIT 1
                     `,
-                    [params.userId, params.planId, usageType, params.periodStart, params.periodEnd]
+                    [params.userId, usageType, params.periodStart, params.periodEnd]
                 )
 
                 if (existing.rows.length > 0) {
@@ -809,6 +843,13 @@ export class UserRepository implements IUserRepository {
                         [row.used_count, baseLimit + delta, delta, row.id]
                     )
                 } else {
+                    if (!planId) {
+                        throw new BaseAppError(
+                            'Cannot create usage row: tenant has no user_plans entry to satisfy FK',
+                            ErrorCode.BAD_REQUEST,
+                            400
+                        )
+                    }
                     await client.query(
                         `
                         INSERT INTO user_plan_usage (
@@ -823,18 +864,19 @@ export class UserRepository implements IUserRepository {
                         )
                         VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
                         `,
-                        [uuidv4(), params.userId, params.planId, usageType, params.periodStart, params.periodEnd, baseLimit + delta]
+                        [uuidv4(), params.userId, planId, usageType, params.periodStart, params.periodEnd, baseLimit + delta]
                     )
                 }
             }
 
-            await applyDelta('sent', params.deltas.sent ?? 0, params.baseLimits.sent)
-            await applyDelta('scheduled', params.deltas.scheduled ?? 0, params.baseLimits.scheduled)
-            await applyDelta('ai', params.deltas.ai ?? 0, params.baseLimits.ai)
+            await applyDelta('sent', params.deltas.sent ?? 0, baseLimits.sent)
+            await applyDelta('scheduled', params.deltas.scheduled ?? 0, baseLimits.scheduled)
+            await applyDelta('ai', params.deltas.ai ?? 0, baseLimits.ai)
 
             await client.query('COMMIT')
         } catch (error) {
             await client.query('ROLLBACK')
+            if (error instanceof BaseAppError) throw error
             throw new BaseAppError('Failed to increment usage limits', ErrorCode.UNKNOWN_ERROR, 500)
         } finally {
             client.release()
@@ -855,43 +897,46 @@ export class UserRepository implements IUserRepository {
 
         try {
             const query = `
-                WITH user_plan AS (
-                    SELECT 
-                        up.id as plan_id,
-                        up.sent_posts_limit,
-                        up.scheduled_posts_limit,
-                        COALESCE(up.accounts_limit::int, 0) as accounts_limit,
-                        COALESCE(up.ai_requests_limit::int, 0) as ai_requests_limit
-                    FROM user_plans up
-                    WHERE up.tenant_id = $1 
-                    AND up.is_active = true
-                    AND (up.end_date IS NULL OR up.end_date > NOW())
-                    ORDER BY up.start_date DESC
-                    LIMIT 1
+                WITH tenant_limits AS (
+                    SELECT
+                        t.id AS tenant_id,
+                        t.default_sent_posts_limit,
+                        t.default_scheduled_posts_limit,
+                        COALESCE(t.default_account_limit::int, 999999) AS default_account_limit,
+                        t.default_ai_requests_limit
+                    FROM tenants t
+                    WHERE t.id = $1
                 ),
                 usage_types AS (
-                    SELECT unnest(ARRAY['sent', 'scheduled', 'accounts', 'ai'])::text as usage_type
+                    SELECT unnest(ARRAY['sent', 'scheduled', 'accounts', 'ai'])::text AS usage_type
+                ),
+                period_usage AS (
+                    SELECT
+                        usage_type,
+                        SUM(used_count)::int AS used_count,
+                        MAX(limit_count)::int AS limit_count
+                    FROM user_plan_usage
+                    WHERE tenant_id = $1
+                      AND period_start = $2
+                      AND period_end = $3
+                    GROUP BY usage_type
                 ),
                 usage_data AS (
                     SELECT
                         ut.usage_type,
-                        COALESCE(upu.used_count, 0) as used_count,
+                        COALESCE(pu.used_count, 0) AS used_count,
                         COALESCE(
-                            upu.limit_count,
+                            pu.limit_count,
                             CASE
-                                WHEN ut.usage_type = 'sent' THEN up.sent_posts_limit
-                                WHEN ut.usage_type = 'scheduled' THEN up.scheduled_posts_limit
-                                WHEN ut.usage_type = 'accounts' THEN up.accounts_limit
-                                WHEN ut.usage_type = 'ai' THEN up.ai_requests_limit
+                                WHEN ut.usage_type = 'sent' THEN tl.default_sent_posts_limit
+                                WHEN ut.usage_type = 'scheduled' THEN tl.default_scheduled_posts_limit
+                                WHEN ut.usage_type = 'accounts' THEN tl.default_account_limit
+                                WHEN ut.usage_type = 'ai' THEN tl.default_ai_requests_limit
                             END
-                        ) as limit_count
-                    FROM user_plan up
+                        ) AS limit_count
+                    FROM tenant_limits tl
                     CROSS JOIN usage_types ut
-                    LEFT JOIN user_plan_usage upu ON upu.plan_id = up.plan_id
-                        AND upu.tenant_id = $1
-                        AND upu.period_start = $2
-                        AND upu.period_end = $3
-                        AND upu.usage_type = ut.usage_type
+                    LEFT JOIN period_usage pu ON pu.usage_type = ut.usage_type
                 )
                 SELECT 
                     COALESCE(MAX(CASE WHEN usage_type = 'sent' THEN used_count END), 0) as sent_used,

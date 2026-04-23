@@ -779,7 +779,7 @@ export class UserService implements IUserService {
             const { startDate, endDate } =
                 periodStart && periodEnd
                     ? { startDate: periodStart, endDate: periodEnd }
-                    : await this.getActivePlanPeriod(userId)
+                    : this.getCurrentBillingPeriod()
             return await this.repository.getCurrentUsageQuota(userId, startDate, endDate)
         } catch (error) {
             if (error instanceof BaseAppError) throw error
@@ -819,23 +819,16 @@ export class UserService implements IUserService {
         }
 
         try {
-            const plan = await this.repository.findUserPlanByUserId(userId)
-            const { startDate, endDate } = this.resolvePlanPeriod(plan)
+            const { startDate, endDate } = this.getCurrentBillingPeriod()
 
             await this.repository.incrementUsageLimits({
                 userId,
-                planId: plan.id,
                 periodStart: startDate,
                 periodEnd: endDate,
                 deltas: {
                     sent: sentDelta,
                     scheduled: scheduledDelta,
                     ai: aiDelta,
-                },
-                baseLimits: {
-                    sent: plan.sendPostsLimit,
-                    scheduled: plan.scheduledPostsLimit,
-                    ai: plan.aiRequestsLimit ?? 0,
                 },
             })
 
@@ -853,7 +846,7 @@ export class UserService implements IUserService {
 
     private async adjustUsage(userId: string, usageType: 'accounts' | 'ai', delta: number): Promise<void> {
         try {
-            const { startDate, endDate } = await this.getActivePlanPeriod(userId)
+            const { startDate, endDate } = this.getCurrentBillingPeriod()
             const quota = await this.repository.getCurrentUsageQuota(userId, startDate, endDate)
 
             const counters = usageType === 'accounts' ? quota.connectedAccounts : quota.aiRequests

@@ -37,11 +37,9 @@ class MockStripeService implements IStripeService {
 class MockUserRepository implements Partial<IUserRepository> {
     public incrementUsageLimitsCalls: Array<{
         userId: string
-        planId: string
         periodStart: Date
         periodEnd: Date
         deltas: { sent?: number; scheduled?: number; ai?: number }
-        baseLimits: { sent: number; scheduled: number; ai: number }
     }> = []
 
     public userPlan: UserPlan | null = null
@@ -63,11 +61,9 @@ class MockUserRepository implements Partial<IUserRepository> {
 
     async incrementUsageLimits(params: {
         userId: string
-        planId: string
         periodStart: Date
         periodEnd: Date
         deltas: { sent?: number; scheduled?: number; ai?: number }
-        baseLimits: { sent: number; scheduled: number; ai: number }
     }): Promise<void> {
         this.incrementUsageLimitsCalls.push(params)
     }
@@ -183,9 +179,6 @@ async function testExtraSmallAddon() {
     assert.strictEqual(call.deltas.sent, 20, 'EXTRA_SMALL should add 20 sent posts')
     assert.strictEqual(call.deltas.scheduled, 10, 'EXTRA_SMALL should add 10 scheduled posts')
     assert.strictEqual(call.deltas.ai, 10, 'EXTRA_SMALL should add 10 AI requests')
-    assert.strictEqual(call.baseLimits.sent, 30, 'Base limit should be 30')
-    assert.strictEqual(call.baseLimits.scheduled, 10, 'Base limit should be 10')
-    assert.strictEqual(call.baseLimits.ai, 0, 'Base AI limit should be 0')
 
     console.log('✅ EXTRA_SMALL add-on test passed')
 }
@@ -304,10 +297,6 @@ async function testCumulativePurchases() {
     assert.strictEqual(secondCall.deltas.sent, 100)
     assert.strictEqual(secondCall.deltas.scheduled, 80)
     assert.strictEqual(secondCall.deltas.ai, 30)
-
-    // Both should use same base limits
-    assert.strictEqual(firstCall.baseLimits.sent, 30)
-    assert.strictEqual(secondCall.baseLimits.sent, 30)
 
     console.log('✅ Cumulative purchases test passed')
 }
