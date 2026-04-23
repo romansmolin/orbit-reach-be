@@ -873,15 +873,18 @@ export class UserRepository implements IUserRepository {
                     SELECT unnest(ARRAY['sent', 'scheduled', 'accounts', 'ai'])::text as usage_type
                 ),
                 usage_data AS (
-                    SELECT 
+                    SELECT
                         ut.usage_type,
                         COALESCE(upu.used_count, 0) as used_count,
-                        CASE 
-                            WHEN ut.usage_type = 'sent' THEN up.sent_posts_limit
-                            WHEN ut.usage_type = 'scheduled' THEN up.scheduled_posts_limit
-                            WHEN ut.usage_type = 'accounts' THEN up.accounts_limit
-                            WHEN ut.usage_type = 'ai' THEN up.ai_requests_limit
-                        END as limit_count
+                        COALESCE(
+                            upu.limit_count,
+                            CASE
+                                WHEN ut.usage_type = 'sent' THEN up.sent_posts_limit
+                                WHEN ut.usage_type = 'scheduled' THEN up.scheduled_posts_limit
+                                WHEN ut.usage_type = 'accounts' THEN up.accounts_limit
+                                WHEN ut.usage_type = 'ai' THEN up.ai_requests_limit
+                            END
+                        ) as limit_count
                     FROM user_plan up
                     CROSS JOIN usage_types ut
                     LEFT JOIN user_plan_usage upu ON upu.plan_id = up.plan_id
