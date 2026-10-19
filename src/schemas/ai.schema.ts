@@ -14,6 +14,9 @@ export enum AiTone {
     URGENT = 'urgent',
 }
 
+export const AI_MODEL_TIERS_LIST = ['cheap', 'default', 'complex'] as const
+export type AiModelTier = (typeof AI_MODEL_TIERS_LIST)[number]
+
 const Account = z.object({
     id: z.uuid('Invalid UUID format for account'),
     platform: z.enum(
@@ -28,6 +31,7 @@ export const aiApiPayloadSchema = z.object({
         'We expect the following values: friendly, professional,informative,humorous,inspirational ,empathetic, authoritative, playful, educational, urgent'
     ),
     language: z.string(),
+    modelTier: z.enum(AI_MODEL_TIERS_LIST).default('default'),
     includeHashtags: z.boolean().optional(),
     notesForAi: z
         .string()

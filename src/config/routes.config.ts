@@ -15,6 +15,6 @@ export function configureRoutes(app: express.Application, services: Services): v
     app.use(createUserRoutes(services.logger, services))
     app.use(createAccountsRoutes(services.logger, services))
     app.use(createPostRoutes(services.logger, services.postsService))
-    app.use(createAiRoutes(services.logger, services.aiService))
+    app.use(createAiRoutes(services.logger, services.aiService, services.aiCreditsService))
     app.use(createEmailRoutes(services.logger, services.emailService))
 }

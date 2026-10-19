@@ -7,6 +7,8 @@ import { SocialMediaTokenRefresherService } from '@/services/social-media-token-
 import { PlatformQuotaService } from '@/services/platform-quota-service/platform-quouta.service'
 import { PostService } from '@/services/posts-service'
 import { AiService, type IAiService } from '@/services/ai-service'
+import { AiCreditsService, type IAiCreditsService } from '@/services/ai-credits-service'
+import { AiCreditsRepository } from '@/repositories/ai-credits-repository'
 import { TenantSettingsRepository } from '@/repositories/tenant-settings-repository/tenant-settings.repository'
 import { TenantSettingsService } from '@/services/tenant-settings-service/tenant-settings.service'
 import { SocialMediaErrorHandler } from '@/shared/infra/social-media-errors'
@@ -54,6 +56,7 @@ export interface Services {
     postsService: PostService
     postScheduler: IPostScheduler
     aiService: IAiService
+    aiCreditsService: IAiCreditsService
     rateLimiterService: RateLimiterService
     emailService: IEmailService
     userService: UserService
@@ -92,12 +95,14 @@ export function initializeServices() {
     const platformQuotaService = new PlatformQuotaService(platformUsageRepository)
     const promoCodesRepository = new PromoCodesRepository()
     const promoCodesService = new PromoCodesService(promoCodesRepository)
+    const aiCreditsService: IAiCreditsService = new AiCreditsService(new AiCreditsRepository())
     const secureProcessorPaymentService = new SecureProcessorPaymentService(
         paymentTokensRepository,
         userService,
         logger,
         undefined,
-        promoCodesService
+        promoCodesService,
+        aiCreditsService
     )
 
     const socialMediaErrorHandler = new SocialMediaErrorHandler(logger, postRepository)
@@ -134,10 +139,10 @@ export function initializeServices() {
         socialMediaErrorHandler
     )
 
-    const openAiBaseUrl = process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1'
+    const openAiBaseUrl = process.env.OPENAI_API_URL || 'https://api.openai.com/v1'
 
     const openAiClient = new AxiosApiClient(openAiBaseUrl)
-    const aiService: IAiService = new AiService(openAiClient, logger, userService)
+    const aiService: IAiService = new AiService(openAiClient, logger, aiCreditsService)
     const rateLimiterService = createDefaultRateLimiterService(logger)
     const accountsService = new AccountsService(accountRepository, logger, mediaUploader, userService, postsService)
     const socialMediaConnector = new SocilaMediaConnectorService(
@@ -181,6 +186,7 @@ export function initializeServices() {
         postsService,
         postScheduler,
         aiService,
+        aiCreditsService,
         rateLimiterService,
         emailService,
         userService,

@@ -1,13 +1,13 @@
 import { ZodError } from 'zod'
-import { AiOutput, AiOutputSchema, AiRequest } from '@/schemas/ai.schema'
+import { AiModelTier, AiOutput, AiOutputSchema, AiRequest } from '@/schemas/ai.schema'
 import { PostPlatform, SocilaMediaPlatform } from '@/schemas/posts.schemas'
 import { IApiClient } from '@/shared/infra/api'
 import { BaseAppError } from '@/shared/errors/base-error'
 import { ErrorCode } from '@/shared/consts/error-codes.const'
 import { ILogger } from '@/shared/infra/logger/logger.interface'
 import { AiIntroductoryResult, IAiService } from './ai-service.interface'
-import { IUserService } from '@/services/users-service/user.service.interface'
-import { UserPlans } from '@/shared/consts/plans'
+import { IAiCreditsService } from '@/services/ai-credits-service'
+import { AI_MODEL_TIERS, calculateGenerationCost } from './ai-model-tier'
 
 type OpenAiRole = 'system' | 'user'
 
@@ -129,21 +129,14 @@ export class AiService implements IAiService {
     private readonly apiClient: IApiClient
     private readonly logger: ILogger
     private readonly apiKey: string
-    private readonly model: string
     private readonly envLimits: EnvLimits
-    private readonly userService: IUserService
+    private readonly aiCreditsService: IAiCreditsService
 
-    constructor(
-        apiClient: IApiClient,
-        logger: ILogger,
-        userService: IUserService,
-        options?: { apiKey?: string; model?: string }
-    ) {
+    constructor(apiClient: IApiClient, logger: ILogger, aiCreditsService: IAiCreditsService) {
         this.apiClient = apiClient
         this.logger = logger
-        this.userService = userService
-        this.apiKey = options?.apiKey || process.env.OPENAI_API_KEY || ''
-        this.model = options?.model || process.env.OPENAI_CONTENT_MODEL || 'gpt-4.1'
+        this.aiCreditsService = aiCreditsService
+        this.apiKey = process.env.OPENAI_API_KEY || ''
         this.envLimits = this.loadEnvLimits()
 
         const missingLimits = Object.entries(this.envLimits)
@@ -159,17 +152,45 @@ export class AiService implements IAiService {
     }
 
     async generateIntroductoryCopy(userId: string, payload: AiRequest): Promise<AiIntroductoryResult[]> {
-        await this.ensureUserHasAiAccess(userId)
+        const model = this.resolveModel(payload.modelTier)
 
-        if (!this.apiKey) {
-            this.logger.error('OpenAI API key is not configured', {
+        this.ensureSupportedPlatforms(payload)
+
+        const cost = calculateGenerationCost(payload.modelTier, payload.selectedAccounts.length)
+        await this.aiCreditsService.spend(userId, cost)
+
+        try {
+            return await this.generateWithRetries(payload, model)
+        } catch (error) {
+            // Credits are charged up front so concurrent requests cannot overspend; a failed generation must not cost anything.
+            await this.aiCreditsService.refund(userId, cost).catch((refundError: unknown) => {
+                this.logger.error('Failed to refund AI credits', {
+                    operation: 'ai_generate_content',
+                    userId,
+                    cost,
+                    details: refundError instanceof Error ? refundError.message : String(refundError),
+                })
+            })
+            throw error
+        }
+    }
+
+    private resolveModel(tier: AiModelTier): string {
+        const { envKey } = AI_MODEL_TIERS[tier]
+        const model = process.env[envKey]?.trim()
+
+        if (!this.apiKey || !model) {
+            this.logger.error('OpenAI is not configured', {
                 operation: 'ai_generate_content',
+                missing: !this.apiKey ? 'OPENAI_API_KEY' : envKey,
             })
             throw new BaseAppError('AI service is not configured', ErrorCode.UNKNOWN_ERROR, 500)
         }
 
-        this.ensureSupportedPlatforms(payload)
+        return model
+    }
 
+    private async generateWithRetries(payload: AiRequest, model: string): Promise<AiIntroductoryResult[]> {
         const maxAttempts = 2
         let lastValidationError: unknown = null
 
@@ -177,7 +198,7 @@ export class AiService implements IAiService {
             const isRepairAttempt = attempt > 1
 
             try {
-                const aiOutput = await this.fetchAndValidateResponse(payload, isRepairAttempt)
+                const aiOutput = await this.fetchAndValidateResponse(payload, model, isRepairAttempt)
                 const results = this.transformOutput(payload, aiOutput)
                 this.ensureForbiddenCompliance(results, payload.forbiddenWords)
 
@@ -255,32 +276,15 @@ export class AiService implements IAiService {
         throw new BaseAppError('Failed to generate AI content', ErrorCode.UNKNOWN_ERROR, 502)
     }
 
-    private async ensureUserHasAiAccess(userId: string): Promise<void> {
-        try {
-            const plan = await this.userService.getUserPlan(userId)
-            const normalizedPlanName = plan?.planName?.toUpperCase() as UserPlans | undefined
-
-            if (normalizedPlanName !== UserPlans.PRO) {
-                throw new BaseAppError('AI features are available only on the Pro plan', ErrorCode.FORBIDDEN, 403)
-            }
-
-            await this.userService.incrementAiUsage(userId)
-        } catch (error) {
-            if (error instanceof BaseAppError && error.code === ErrorCode.BAD_REQUEST) {
-                throw new BaseAppError('AI features are available only on the Pro plan', ErrorCode.FORBIDDEN, 403)
-            }
-
-            throw error
-        }
-    }
-
-    private async fetchAndValidateResponse(payload: AiRequest, isRepairAttempt: boolean): Promise<AiOutput> {
+    private async fetchAndValidateResponse(
+        payload: AiRequest,
+        model: string,
+        isRepairAttempt: boolean
+    ): Promise<AiOutput> {
         const messages = this.buildMessages(payload, isRepairAttempt)
 
         const requestBody = {
-            model: this.model,
-            temperature: 0.2,
-            top_p: 0.9,
+            model,
             response_format: { type: 'json_object' as const },
             messages,
         }

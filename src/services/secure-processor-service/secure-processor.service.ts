@@ -8,6 +8,7 @@ import { IPaymentTokensRepository } from '@/repositories/payment-tokens-reposito
 import { IUserService } from '@/services/users-service/user.service.interface'
 import { PaymentToken, PaymentTokenStatus, UsageDeltas } from '@/entities/payment-token'
 import { IPromoCodesService } from '@/services/promo-codes-service/promo-codes.service.interface'
+import { IAiCreditsService } from '@/services/ai-credits-service'
 import {
     CheckoutTokenResponse,
     CreateCheckoutParams,
@@ -86,13 +87,15 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
     private readonly frontendBaseUrl: string
     private readonly authHeader: string
     private readonly promoCodesService?: IPromoCodesService
+    private readonly aiCreditsService?: IAiCreditsService
 
     constructor(
         repository: IPaymentTokensRepository,
         userService: IUserService,
         logger: ILogger,
         apiClient: IApiClient = new AxiosApiClient('https://checkout.secure-processor.com'),
-        promoCodesService?: IPromoCodesService
+        promoCodesService?: IPromoCodesService,
+        aiCreditsService?: IAiCreditsService
     ) {
         this.repository = repository
         this.userService = userService
@@ -106,6 +109,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
         this.frontendBaseUrl = this.resolveFrontendBaseUrl()
         this.authHeader = `Basic ${Buffer.from(`${this.shopId}:${this.secretKey}`).toString('base64')}`
         this.promoCodesService = promoCodesService
+        this.aiCreditsService = aiCreditsService
     }
 
     async createCheckoutToken(params: CreateCheckoutParams): Promise<CheckoutTokenResponse> {
@@ -369,9 +373,10 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                     usageDeltas: {
                         sentPosts: deltas?.sentPosts ?? 0,
                         scheduledPosts: deltas?.scheduledPosts ?? 0,
-                        aiRequests: deltas?.aiRequests ?? 0,
+                        aiRequests: 0,
                     },
                 })
+                await this.aiCreditsService?.grantForPurchase(record.tenantId, deltas?.aiRequests ?? 0, record.id)
                 this.logger.info('Secure Processor applyFulfillment addon applied', {
                     operation: 'applyFulfillment',
                     recordId: record.id,
