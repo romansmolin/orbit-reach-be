@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { ZodError } from 'zod'
 import { AiModelTier, AiOutput, AiOutputSchema, AiRequest } from '@/schemas/ai.schema'
 import { PostPlatform, SocilaMediaPlatform } from '@/schemas/posts.schemas'
@@ -315,6 +316,10 @@ export class AiService implements IAiService {
                               : String(error),
                 },
                 details: error instanceof Error ? error.message : String(error),
+                model,
+                providerStatus: axios.isAxiosError(error) ? error.response?.status : undefined,
+                providerResponse: axios.isAxiosError(error) ? error.response?.data : undefined,
+                requestUrl: axios.isAxiosError(error) ? `${error.config?.baseURL ?? ''}${error.config?.url ?? ''}` : undefined,
             })
 
             throw new BaseAppError('Failed to contact AI provider', ErrorCode.UNKNOWN_ERROR, 502)
