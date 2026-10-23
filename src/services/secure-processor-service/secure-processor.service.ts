@@ -800,6 +800,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                     return_url: `${this.backendBaseUrl}/payments/secure-processor/return`,
                     notification_url: `${this.backendBaseUrl}/payments/secure-processor/webhook`,
                     language: 'en',
+                    customer_fields: {},
                 },
                 order: {
                     currency: pricing.currency,
@@ -947,6 +948,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                     return_url: `${this.backendBaseUrl}/payments/secure-processor/return`,
                     notification_url: `${this.backendBaseUrl}/payments/secure-processor/webhook`,
                     language: 'en',
+                    customer_fields: {},
                 },
                 order: {
                     currency,
@@ -1130,6 +1132,7 @@ export class SecureProcessorPaymentService implements ISecureProcessorPaymentSer
                     return_url: `${this.backendBaseUrl}/payments/secure-processor/return`,
                     notification_url: `${this.backendBaseUrl}/payments/secure-processor/webhook`,
                     language: 'en',
+                    customer_fields: {},
                 },
                 order: {
                     currency: pricing.currency,
